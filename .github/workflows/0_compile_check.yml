@@ -57,8 +57,9 @@ jobs:
           xcodegen --version
           xcodegen generate
 
-      - name: Build for iOS Simulator (no signing)
-        # Default shell is bash -eo pipefail: a failing xcodebuild fails the step.
+      # Release = the configuration workflow 4 archives. Default shell is
+      # bash -eo pipefail: a failing xcodebuild fails the step.
+      - name: Build Release for iOS Simulator (no signing)
         run: |
           mkdir -p buildlog
           xcodebuild build \
@@ -71,31 +72,50 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             COMPILER_INDEX_STORE_ENABLE=NO \
-            2>&1 | tee buildlog/xcodebuild.log
+            2>&1 | tee buildlog/xcodebuild-release.log
+
+      # Debug too: code behind `#if DEBUG` (sample data) is only compiled here.
+      - name: Build Debug for iOS Simulator (no signing)
+        run: |
+          xcodebuild build \
+            -project BIOS.xcodeproj \
+            -scheme BIOS \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            2>&1 | tee buildlog/xcodebuild-debug.log
 
       - name: Summary (errors and warnings)
         if: always()
         run: |
           set +e +o pipefail
-          LOG=buildlog/xcodebuild.log
           {
             echo "## Compile Check: ${GITHUB_REF_NAME} @ ${GITHUB_SHA::7}"
             echo
-            if [ ! -f "$LOG" ]; then
-              echo "No build log (the build step did not run)."
+            if ! ls buildlog/xcodebuild-*.log >/dev/null 2>&1; then
+              echo "No build log (the build steps did not run)."
               exit 0
             fi
-            ERRORS="$(grep -E ': error: |^error: ' "$LOG" | sort -u || true)"
-            WARNINGS="$(grep -E ': warning: ' "$LOG" | grep -v 'appintentsmetadataprocessor' | sort -u || true)"
-            NE=$( [ -n "$ERRORS" ] && printf '%s\n' "$ERRORS" | wc -l | tr -d ' ' || echo 0)
-            NW=$( [ -n "$WARNINGS" ] && printf '%s\n' "$WARNINGS" | wc -l | tr -d ' ' || echo 0)
+            for LOG in buildlog/xcodebuild-*.log; do
+              NAME="$(basename "$LOG" .log)"
+              if grep -q 'BUILD SUCCEEDED' "$LOG"; then
+                echo "- ${NAME}: BUILD SUCCEEDED"
+              else
+                echo "- ${NAME}: BUILD FAILED"
+              fi
+            done
+            ERRORS="$(cat buildlog/xcodebuild-*.log | grep -E ': error: |^error: ' | sort -u)"
+            WARNINGS="$(cat buildlog/xcodebuild-*.log | grep -E ': warning: ' | grep -v 'appintentsmetadataprocessor' | sort -u)"
+            NE=0
+            NW=0
+            [ -n "$ERRORS" ] && NE="$(printf '%s\n' "$ERRORS" | wc -l | tr -d ' ')"
+            [ -n "$WARNINGS" ] && NW="$(printf '%s\n' "$WARNINGS" | wc -l | tr -d ' ')"
             echo "- Errors: $NE"
             echo "- Warnings: $NW"
-            if grep -q '\*\* BUILD SUCCEEDED \*\*' "$LOG"; then
-              echo "- Result: BUILD SUCCEEDED"
-            else
-              echo "- Result: BUILD FAILED"
-            fi
             if [ -n "$ERRORS" ]; then
               echo
               echo "### Errors"
@@ -111,6 +131,7 @@ jobs:
               echo '```'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
 
       - name: Upload build log
         if: failure()

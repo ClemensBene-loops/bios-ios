@@ -4,13 +4,18 @@ import Foundation
 enum APIError: LocalizedError, Equatable {
     case invalidResponse
     case http(Int)
+    case notConfigured
 
     var errorDescription: String? {
         switch self {
         case .invalidResponse:
             return "Ungültige Antwort vom Server"
+        case .notConfigured:
+            return "Server nicht konfiguriert"
         case .http(401), .http(403):
             return "Server lehnt das Secret ab (HTTP 401/403)"
+        case .http(404):
+            return "Endpunkt fehlt am Server (HTTP 404)"
         case .http(let status):
             return "Server-Fehler (HTTP \(status))"
         }
@@ -22,21 +27,27 @@ enum APIError: LocalizedError, Equatable {
 /// Every request carries `Authorization: Bearer <BIOSAPISecret>`. Network
 /// errors, HTTP 429 and 5xx are retried with exponential backoff (up to
 /// `maxAttempts` attempts in total); other HTTP errors fail immediately.
+/// All clients share one URLSession (connection reuse, no per-call sessions).
 struct APIClient: Sendable {
     let baseURL: URL
     let secret: String
     let session: URLSession
     let maxAttempts: Int
 
-    init(baseURL: URL, secret: String, maxAttempts: Int = 3) {
-        self.baseURL = baseURL
-        self.secret = secret
-        self.maxAttempts = max(1, maxAttempts)
+    static let sharedSession: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 15
         configuration.timeoutIntervalForResource = 30
         configuration.waitsForConnectivity = false
-        self.session = URLSession(configuration: configuration)
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: configuration)
+    }()
+
+    init(baseURL: URL, secret: String, session: URLSession = APIClient.sharedSession, maxAttempts: Int = 3) {
+        self.baseURL = baseURL
+        self.secret = secret
+        self.session = session
+        self.maxAttempts = max(1, maxAttempts)
     }
 
     /// Client from the build-time config, or nil if URL or secret is missing.
@@ -55,19 +66,51 @@ struct APIClient: Sendable {
         _ = try await send(request)
     }
 
-    /// `GET /v1/summary`: latest Whoop check and outlook (Phase 3).
+    /// `GET /v1/summary`: latest Whoop check and outlook (v1 contract, kept for build 2).
     func fetchSummary() async throws -> SummaryResponse {
         let request = makeRequest(path: ["v1", "summary"], method: "GET")
         let data = try await send(request)
         return try JSONDecoder().decode(SummaryResponse.self, from: data)
     }
 
+    /// `GET /v1/dashboard`: ready-made tiles for the Heute tab and friends.
+    func fetchDashboard() async throws -> JSONValue {
+        try await getJSON(path: ["v1", "dashboard"])
+    }
+
+    /// `GET /v1/series?metric=...&days=...[&source=...]`: one logical time series.
+    func fetchSeries(metric: String, days: Int, source: String? = nil) async throws -> JSONValue {
+        var query = [
+            URLQueryItem(name: "metric", value: metric),
+            URLQueryItem(name: "days", value: String(days)),
+        ]
+        if let source, !source.isEmpty {
+            query.append(URLQueryItem(name: "source", value: source))
+        }
+        return try await getJSON(path: ["v1", "series"], query: query)
+    }
+
+    /// GET returning a JSON object (anything else is an invalid response).
+    func getJSON(path: [String], query: [URLQueryItem] = []) async throws -> JSONValue {
+        let request = makeRequest(path: path, query: query, method: "GET")
+        let data = try await send(request)
+        let value = try JSONDecoder().decode(JSONValue.self, from: data)
+        guard value.objectValue != nil else { throw APIError.invalidResponse }
+        return value
+    }
+
     // MARK: - Internals
 
-    private func makeRequest(path: [String], method: String) -> URLRequest {
+    private func makeRequest(path: [String], query: [URLQueryItem] = [], method: String) -> URLRequest {
         var url = baseURL
         for component in path {
             url = url.appendingPathComponent(component)
+        }
+        if !query.isEmpty, var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            components.queryItems = query
+            if let withQuery = components.url {
+                url = withQuery
+            }
         }
         var request = URLRequest(url: url)
         request.httpMethod = method
@@ -113,5 +156,27 @@ struct APIClient: Sendable {
             throw APIError.http(status)
         }
         throw lastError
+    }
+}
+
+/// Classifies refresh errors for the UI.
+enum ErrorKind {
+    /// Cancellation (task or URLSession) is not an error worth showing.
+    static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return true }
+        return false
+    }
+
+    /// No connection (offline, DNS, timeout): the UI says "Offline" instead of an error.
+    static func isOffline(_ error: Error) -> Bool {
+        guard let urlError = error as? URLError else { return false }
+        switch urlError.code {
+        case .notConnectedToInternet, .networkConnectionLost, .timedOut, .cannotFindHost,
+             .cannotConnectToHost, .dnsLookupFailed, .dataNotAllowed, .internationalRoamingOff:
+            return true
+        default:
+            return false
+        }
     }
 }

@@ -31,6 +31,10 @@
 	</dict>
 	<key>UILaunchScreen</key>
 	<dict/>
+	<!-- v2 is dark first (approved mockup): fixed app-wide from launch, also for
+	     system sheets and the launch screen, no light flash. -->
+	<key>UIUserInterfaceStyle</key>
+	<string>Dark</string>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

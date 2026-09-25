@@ -9,15 +9,22 @@ struct BIOSApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView(state: AppState.shared, store: SummaryStore.shared)
-                .onChange(of: scenePhase) { _, newPhase in
-                    if newPhase == .active {
-                        appDelegate.refreshAuthorizationIfNeeded()
-                        Task { @MainActor in
-                            await SummaryStore.shared.refresh()
-                        }
+            // Dark mode is fixed app-wide by UIUserInterfaceStyle = Dark in
+            // Info.plist (applies from launch, also to system sheets).
+            RootView(
+                state: AppState.shared,
+                router: Router.shared,
+                dashboardStore: DashboardStore.shared,
+                seriesStore: SeriesStore.shared
+            )
+            .onChange(of: scenePhase) { _, newPhase in
+                if newPhase == .active {
+                    appDelegate.refreshAuthorizationIfNeeded()
+                    Task { @MainActor in
+                        await DashboardStore.shared.refresh()
                     }
                 }
+            }
         }
     }
 }
