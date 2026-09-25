@@ -8,7 +8,10 @@ key + fastlane match. Full documentation follows in Phase 4.
 ## Layout
 
 - `project.yml`: XcodeGen spec. `BIOS.xcodeproj` is generated on the runner and not committed.
-- `BIOS/`: Swift sources and asset catalog (app icon).
+- `BIOS/`: Swift sources and asset catalog (app icon). `App/AppDelegate.swift` asks for push
+  permission, registers with APNs and uploads the device token on every launch via
+  `Networking/APIClient.swift` (`POST {BIOSAPIBaseURL}/v1/devices`, `Authorization: Bearer <BIOSAPISecret>`,
+  `environment` = `sandbox` for Debug, `production` for Release/TestFlight from `APS_ENVIRONMENT`).
 - `Config/`: Info.plist, entitlements (Push), xcconfigs (team, `APS_ENVIRONMENT`).
 - `fastlane/`: lanes `validate_secrets`, `identifiers`, `certs`, `build`, `release`.
 - `tools/make_icon.py`: renders the app icon (Pillow + numpy), preview in `docs/icon-preview.png`.

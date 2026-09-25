@@ -42,5 +42,10 @@
 	<string></string>
 	<key>BIOSAPISecret</key>
 	<string></string>
+	<!-- Same value as the aps-environment entitlement (xcconfig APS_ENVIRONMENT):
+	     development (Debug) or production (Release/TestFlight). The app sends it
+	     to the server so the right APNs host (sandbox/production) is used. -->
+	<key>BIOSAPSEnvironment</key>
+	<string>$(APS_ENVIRONMENT)</string>
 </dict>
 </plist>

@@ -1,0 +1,117 @@
+import Foundation
+
+/// Errors of the BIOS server API, with German messages for the UI.
+enum APIError: LocalizedError, Equatable {
+    case invalidResponse
+    case http(Int)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidResponse:
+            return "Ungültige Antwort vom Server"
+        case .http(401), .http(403):
+            return "Server lehnt das Secret ab (HTTP 401/403)"
+        case .http(let status):
+            return "Server-Fehler (HTTP \(status))"
+        }
+    }
+}
+
+/// Small async client for the BIOS server (`/v1/...` below `BIOSAPIBaseURL`).
+///
+/// Every request carries `Authorization: Bearer <BIOSAPISecret>`. Network
+/// errors, HTTP 429 and 5xx are retried with exponential backoff (up to
+/// `maxAttempts` attempts in total); other HTTP errors fail immediately.
+struct APIClient: Sendable {
+    let baseURL: URL
+    let secret: String
+    let session: URLSession
+    let maxAttempts: Int
+
+    init(baseURL: URL, secret: String, maxAttempts: Int = 3) {
+        self.baseURL = baseURL
+        self.secret = secret
+        self.maxAttempts = max(1, maxAttempts)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 15
+        configuration.timeoutIntervalForResource = 30
+        configuration.waitsForConnectivity = false
+        self.session = URLSession(configuration: configuration)
+    }
+
+    /// Client from the build-time config, or nil if URL or secret is missing.
+    static func fromConfig() -> APIClient? {
+        guard let baseURL = AppConfig.apiBaseURL, let secret = AppConfig.apiSecret else {
+            return nil
+        }
+        return APIClient(baseURL: baseURL, secret: secret)
+    }
+
+    /// `POST /v1/devices`: registers or refreshes this device's APNs token.
+    func registerDevice(_ registration: DeviceRegistration) async throws {
+        var request = makeRequest(path: ["v1", "devices"], method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(registration)
+        _ = try await send(request)
+    }
+
+    /// `GET /v1/summary`: latest Whoop check and outlook (Phase 3).
+    func fetchSummary() async throws -> SummaryResponse {
+        let request = makeRequest(path: ["v1", "summary"], method: "GET")
+        let data = try await send(request)
+        return try JSONDecoder().decode(SummaryResponse.self, from: data)
+    }
+
+    // MARK: - Internals
+
+    private func makeRequest(path: [String], method: String) -> URLRequest {
+        var url = baseURL
+        for component in path {
+            url = url.appendingPathComponent(component)
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.timeoutInterval = 15
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        return request
+    }
+
+    private func send(_ request: URLRequest) async throws -> Data {
+        var lastError: Error = APIError.invalidResponse
+        for attempt in 1...maxAttempts {
+            if attempt > 1 {
+                // 1 s, 2 s, 4 s, ...
+                let seconds = UInt64(1) << UInt64(attempt - 2)
+                try await Task.sleep(nanoseconds: seconds * 1_000_000_000)
+            }
+
+            let result: (Data, URLResponse)
+            do {
+                result = try await session.data(for: request)
+            } catch {
+                if Task.isCancelled {
+                    throw CancellationError()
+                }
+                lastError = error
+                continue
+            }
+
+            guard let http = result.1 as? HTTPURLResponse else {
+                lastError = APIError.invalidResponse
+                continue
+            }
+            let status = http.statusCode
+            if (200..<300).contains(status) {
+                return result.0
+            }
+            if status == 429 || (500..<600).contains(status) {
+                lastError = APIError.http(status)
+                continue
+            }
+            throw APIError.http(status)
+        }
+        throw lastError
+    }
+}
