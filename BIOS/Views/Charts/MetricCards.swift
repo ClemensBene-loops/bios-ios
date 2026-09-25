@@ -119,14 +119,6 @@ enum MetricKind {
         }
     }
 
-    /// Flags mean "infection pattern" (Whoop) or "elevated, context only" (glucose/insulin).
-    var flagIsContext: Bool {
-        switch self {
-        case .glucoseDaily, .tdd, .per10g: return true
-        default: return false
-        }
-    }
-
     /// Glucose and insulin are whole days up to yesterday.
     var isWholeDays: Bool {
         switch self {
@@ -240,7 +232,7 @@ enum MetricKind {
                 spec.band = ChartBand(lo: band.lo, hi: band.hi, mid: model.baseline?.median, color: color)
             }
             spec.flags = model.flagDates
-            spec.flagColor = flagIsContext ? BIOSTheme.context : BIOSTheme.bad
+            spec.contextFlags = model.contextFlagDates
             spec.yDigits = (self == .skinTemp || self == .respRate || self == .per10g) ? 1 : 0
             if self == .sleep {
                 spec.ySuffix = " h"
@@ -270,9 +262,10 @@ enum MetricKind {
                 items.append(LegendItem(color: color, text: "Baseline-Band", mark: .box, opacity: 0.35))
             }
             if !model.flagDates.isEmpty {
-                items.append(flagIsContext
-                    ? LegendItem(color: BIOSTheme.context, text: "erhöht (Kontext)", mark: .dot)
-                    : LegendItem(color: BIOSTheme.bad, text: "Tag mit Infektmuster", mark: .dot))
+                items.append(LegendItem(color: BIOSTheme.bad, text: "Tag mit Infektmuster", mark: .dot))
+            }
+            if !model.contextFlagDates.isEmpty {
+                items.append(LegendItem(color: BIOSTheme.context, text: "erhöht (Kontext)", mark: .diamond))
             }
             return items
         }

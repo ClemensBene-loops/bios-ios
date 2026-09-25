@@ -47,6 +47,8 @@ struct ChartMarker: Identifiable {
 struct ChartFlag: Identifiable {
     let id: Int
     let date: Date
+    /// Context day (indigo diamond) instead of an episode day (red dot).
+    let isContext: Bool
 }
 
 enum ChartXUnit {
@@ -79,8 +81,10 @@ struct ChartSpec {
     var areaColor: Color = .clear
     var band: ChartBand?
     var refs: [ChartRef] = []
+    /// Episode days: red dots under the axis.
     var flags: [Date] = []
-    var flagColor: Color = BIOSTheme.bad
+    /// Context days: indigo diamonds under the axis (shape differs, not only color).
+    var contextFlags: [Date] = []
     var marker: ChartMarker?
     var unit: ChartXUnit = .day
     /// Requested range in days (label density: 7 -> weekdays, more -> dates).
@@ -234,7 +238,8 @@ struct BIOSChart: View {
                     x: .value("Zeit", flag.date),
                     y: .value("Markierung", yDomain.lowerBound)
                 )
-                .foregroundStyle(spec.flagColor)
+                .foregroundStyle(flag.isContext ? BIOSTheme.context : BIOSTheme.bad)
+                .symbol(flag.isContext ? BasicChartSymbolShape.diamond : BasicChartSymbolShape.circle)
                 .symbolSize(30)
             }
         }
@@ -402,7 +407,10 @@ struct BIOSChart: View {
     private func flagMarks(xDomain: ClosedRange<Date>) -> [ChartFlag] {
         var result: [ChartFlag] = []
         for date in spec.flags where xDomain.contains(date) {
-            result.append(ChartFlag(id: result.count, date: date))
+            result.append(ChartFlag(id: result.count, date: date, isContext: false))
+        }
+        for date in spec.contextFlags where xDomain.contains(date) {
+            result.append(ChartFlag(id: result.count, date: date, isContext: true))
         }
         return result
     }

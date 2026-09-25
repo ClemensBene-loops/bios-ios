@@ -576,6 +576,7 @@ struct LegendItem: Identifiable {
         case dashed
         case box
         case dot
+        case diamond
     }
 
     let id = UUID()
@@ -615,6 +616,8 @@ struct LegendView: View {
             RoundedRectangle(cornerRadius: 3).fill(item.color.opacity(item.opacity)).frame(width: 10, height: 10)
         case .dot:
             Circle().fill(item.color).frame(width: 7, height: 7)
+        case .diamond:
+            Rectangle().fill(item.color).frame(width: 6, height: 6).rotationEffect(.degrees(45))
         }
     }
 }

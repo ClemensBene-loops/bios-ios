@@ -73,7 +73,10 @@ struct SeriesModel {
     /// Named sub-series ("wien", "de") when the server sends `series: {...}`.
     let regions: [String: [SeriesPoint]]
     let baseline: SeriesBaseline?
+    /// Episode days (infection check alarm `infekt`), all daily series.
     let flagDates: [Date]
+    /// Context days (glu_up / ins_up, rule A: never an alarm), glucose/insulin only.
+    let contextFlagDates: [Date]
     let generatedAt: Date?
 
     init(json: JSONValue) {
@@ -98,6 +101,7 @@ struct SeriesModel {
         self.regions = regions
         baseline = json.obj("baseline").map { SeriesBaseline(json: $0) }
         flagDates = json.strings("flags").compactMap { BIOSDate.parse($0) }
+        contextFlagDates = json.strings("context_flags").compactMap { BIOSDate.parse($0) }
         generatedAt = BIOSDate.parse(json.str("generated_at"))
     }
 
