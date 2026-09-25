@@ -1,0 +1,48 @@
+name: 2. Add Identifiers
+run-name: Add Identifiers (${{ github.ref_name }})
+
+# Apple-side change: registers the App ID at.bene.bios (if missing) and enables
+# the Push Notifications capability. Idempotent. Manual only.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apple-provisioning
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate
+    if: github.repository_owner == 'ClemensBene-loops'
+    uses: ./.github/workflows/1_validate_secrets.yml
+    secrets: inherit
+
+  identifiers:
+    name: Add Identifiers
+    needs: validate
+    if: github.repository_owner == 'ClemensBene-loops'
+    runs-on: macos-26
+    timeout-minutes: 20
+    env:
+      TEAMID: ${{ secrets.TEAMID }}
+      FASTLANE_KEY_ID: ${{ secrets.FASTLANE_KEY_ID }}
+      FASTLANE_ISSUER_ID: ${{ secrets.FASTLANE_ISSUER_ID }}
+      FASTLANE_KEY: ${{ secrets.FASTLANE_KEY }}
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Install Project Dependencies
+        run: bundle install
+
+      # Workaround for runner clock drift (https://github.com/actions/runner/issues/2996)
+      - name: Sync clock
+        run: sudo sntp -sS time.windows.com
+
+      - name: Fastlane Identifiers
+        run: bundle exec fastlane identifiers

@@ -1,0 +1,229 @@
+# fastlane lanes for the BIOS iOS app, built on GitHub Actions (no Mac).
+# Modeled on the Loop "Browser Build" (ClemensBene-loops/LoopWorkspace).
+#
+# SAFETY: The Match-Secrets repo and its App Store distribution certificate are
+# shared with Loop. This file intentionally contains NO match_nuke and NO
+# certificate renewal logic: revoking that certificate would break Loop.
+# BIOS only ever adds its own App Store provisioning profile.
+#
+# Required env (GitHub org secrets): TEAMID, GH_PAT, MATCH_PASSWORD,
+# FASTLANE_KEY_ID, FASTLANE_ISSUER_ID, FASTLANE_KEY.
+
+require "base64"
+
+default_platform(:ios)
+
+APP_IDENTIFIER = "at.bene.bios"
+APP_NAME = "BIOS"
+MATCH_GIT_URL = "https://github.com/ClemensBene-loops/Match-Secrets.git"
+
+TEAMID = ENV["TEAMID"]
+WORKSPACE = ENV["GITHUB_WORKSPACE"] || File.expand_path("..", Dir.pwd)
+PROJECT = "#{WORKSPACE}/BIOS.xcodeproj"
+OUTPUT_DIR = "#{WORKSPACE}/build"
+IPA_NAME = "BIOS.ipa"
+
+ENV["FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT"] = "120"
+
+platform :ios do
+  # --- helpers ---------------------------------------------------------------
+
+  # Authenticates Spaceship and all actions with the App Store Connect API key.
+  def bios_api_key
+    app_store_connect_api_key(
+      key_id: ENV["FASTLANE_KEY_ID"],
+      issuer_id: ENV["FASTLANE_ISSUER_ID"],
+      key_content: ENV["FASTLANE_KEY"]
+    )
+  end
+
+  def match_auth
+    owner = ENV["GITHUB_REPOSITORY_OWNER"] || "ClemensBene-loops"
+    Base64.strict_encode64("#{owner}:#{ENV["GH_PAT"]}")
+  end
+
+  def push_type
+    Spaceship::ConnectAPI::BundleIdCapability::Type::PUSH_NOTIFICATIONS
+  end
+
+  # --- 1. validate (read-only) -----------------------------------------------
+
+  desc "Validate secrets: API key works, Match-Secrets decrypts. Changes nothing at Apple."
+  lane :validate_secrets do
+    setup_ci if ENV["CI"]
+    bios_api_key
+
+    # Read-only App Store Connect queries (they prove the API key works).
+    bundle_id = Spaceship::ConnectAPI::BundleId.find(APP_IDENTIFIER)
+    if bundle_id
+      caps = bundle_id.get_capabilities.map(&:capability_type)
+      UI.success("Bundle ID #{APP_IDENTIFIER} is registered. Capabilities: #{caps.empty? ? "(none)" : caps.join(", ")}")
+      UI.important("Push Notifications capability is missing (run 2. Add Identifiers).") unless caps.include?(push_type)
+    else
+      UI.important("Bundle ID #{APP_IDENTIFIER} is not registered yet (run 2. Add Identifiers).")
+    end
+
+    app = Spaceship::ConnectAPI::App.find(APP_IDENTIFIER)
+    if app
+      UI.success("App Store Connect app record exists: #{app.name} (#{app.id})")
+    else
+      UI.important("No App Store Connect app record for #{APP_IDENTIFIER} yet (create it before 4. Build).")
+    end
+
+    dist_certs = Spaceship::ConnectAPI::Certificate.all.select do |cert|
+      %w[DISTRIBUTION IOS_DISTRIBUTION].include?(cert.certificate_type)
+    end
+    UI.message("Distribution certificates in the team: #{dist_certs.size}")
+    dist_certs.each do |cert|
+      UI.message("  #{cert.id} (#{cert.certificate_type}) expires #{cert.expiration_date}")
+    end
+
+    # Decrypts Match-Secrets and installs the shared distribution certificate
+    # into the temporary CI keychain. Read-only, no profiles requested.
+    match(
+      type: "appstore",
+      readonly: true,
+      git_url: MATCH_GIT_URL,
+      git_basic_authorization: match_auth,
+      app_identifier: []
+    )
+    UI.success("Match-Secrets decrypted, distribution certificate is present and valid.")
+  end
+
+  # --- 2. identifiers (creates the App ID at Apple) --------------------------
+
+  desc "Register bundle ID at.bene.bios (if missing) with the Push Notifications capability"
+  lane :identifiers do
+    bios_api_key
+
+    bundle_id = Spaceship::ConnectAPI::BundleId.find(APP_IDENTIFIER)
+    if bundle_id
+      UI.message("Bundle ID #{APP_IDENTIFIER} already exists (#{bundle_id.id}).")
+    else
+      UI.message("Creating bundle ID #{APP_IDENTIFIER} ...")
+      bundle_id = Spaceship::ConnectAPI::BundleId.create(
+        name: APP_NAME,
+        identifier: APP_IDENTIFIER,
+        platform: "IOS"
+      )
+    end
+
+    existing = bundle_id.get_capabilities.map(&:capability_type)
+    if existing.include?(push_type)
+      UI.message("Push Notifications capability already enabled.")
+    else
+      UI.message("Enabling Push Notifications capability ...")
+      bundle_id.create_capability(push_type)
+    end
+    UI.success("Bundle ID #{APP_IDENTIFIER} ready.")
+  end
+
+  # --- 3. certs (creates the App Store profile, reuses the certificate) ------
+
+  desc "Create the App Store profile for at.bene.bios, reusing the existing distribution certificate"
+  lane :certs do
+    setup_ci if ENV["CI"]
+    bios_api_key
+
+    # Guard 1: the App ID must exist with Push, otherwise the profile would be
+    # generated without aps-environment.
+    bundle_id = Spaceship::ConnectAPI::BundleId.find(APP_IDENTIFIER)
+    UI.user_error!("Bundle ID #{APP_IDENTIFIER} not found. Run 2. Add Identifiers first.") unless bundle_id
+    unless bundle_id.get_capabilities.map(&:capability_type).include?(push_type)
+      UI.user_error!("Push Notifications capability missing on #{APP_IDENTIFIER}. Run 2. Add Identifiers first.")
+    end
+
+    # Guard 2: the shared certificate must already be in Match-Secrets and valid.
+    # readonly: true fails here instead of ever creating a new certificate.
+    match(
+      type: "appstore",
+      readonly: true,
+      git_url: MATCH_GIT_URL,
+      git_basic_authorization: match_auth,
+      app_identifier: []
+    )
+
+    # Only now allow writes: match finds the existing certificate in the repo
+    # and creates just the missing App Store profile for at.bene.bios.
+    match(
+      type: "appstore",
+      readonly: false,
+      force: false,
+      git_url: MATCH_GIT_URL,
+      git_basic_authorization: match_auth,
+      app_identifier: [APP_IDENTIFIER]
+    )
+    UI.success("App Store profile for #{APP_IDENTIFIER} is in Match-Secrets.")
+  end
+
+  # --- 4. build + release ----------------------------------------------------
+
+  desc "Build a signed App Store IPA (expects BIOS.xcodeproj generated by xcodegen)"
+  lane :build do
+    setup_ci if ENV["CI"]
+    UI.user_error!("#{PROJECT} not found. Run `xcodegen generate` first.") unless File.directory?(PROJECT)
+    api_key = bios_api_key
+
+    previous_build_number = latest_testflight_build_number(
+      app_identifier: APP_IDENTIFIER,
+      api_key: api_key,
+      initial_build_number: 0
+    )
+    current_build_number = previous_build_number.to_i + 1
+    UI.message("Build number: #{current_build_number}")
+
+    increment_build_number(
+      xcodeproj: PROJECT,
+      build_number: current_build_number
+    )
+
+    match(
+      type: "appstore",
+      readonly: true,
+      git_url: MATCH_GIT_URL,
+      git_basic_authorization: match_auth,
+      app_identifier: [APP_IDENTIFIER]
+    )
+
+    mapping = Actions.lane_context[SharedValues::MATCH_PROVISIONING_PROFILE_MAPPING] || {}
+    profile_name = mapping[APP_IDENTIFIER]
+    UI.user_error!("No match profile for #{APP_IDENTIFIER}. Run 3. Create Certificates first.") unless profile_name
+
+    update_code_signing_settings(
+      path: PROJECT,
+      use_automatic_signing: false,
+      team_id: TEAMID,
+      targets: ["BIOS"],
+      bundle_identifier: APP_IDENTIFIER,
+      profile_name: profile_name,
+      code_sign_identity: "iPhone Distribution"
+    )
+
+    gym(
+      project: PROJECT,
+      scheme: "BIOS",
+      configuration: "Release",
+      export_method: "app-store",
+      export_options: {
+        provisioningProfiles: { APP_IDENTIFIER => profile_name }
+      },
+      destination: "generic/platform=iOS",
+      output_directory: OUTPUT_DIR,
+      output_name: IPA_NAME,
+      buildlog_path: "#{WORKSPACE}/buildlog",
+      clean: true
+    )
+  end
+
+  desc "Upload the IPA to TestFlight (does not wait for processing)"
+  lane :release do
+    api_key = bios_api_key
+
+    upload_to_testflight(
+      api_key: api_key,
+      ipa: "#{OUTPUT_DIR}/#{IPA_NAME}",
+      skip_submission: true,
+      skip_waiting_for_build_processing: true
+    )
+  end
+end

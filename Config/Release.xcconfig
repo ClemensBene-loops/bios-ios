@@ -1,0 +1,5 @@
+#include "Base.xcconfig"
+
+// Release (archive for TestFlight/App Store) is signed with the App Store
+// profile -> APNs production. Must match the profile's aps-environment.
+APS_ENVIRONMENT = production

@@ -1,0 +1,4 @@
+#include "Base.xcconfig"
+
+// Debug builds are signed with a development profile -> APNs sandbox.
+APS_ENVIRONMENT = development

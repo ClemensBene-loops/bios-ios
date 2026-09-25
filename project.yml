@@ -1,0 +1,48 @@
+# XcodeGen spec for the BIOS iOS app. Single source of truth for the Xcode
+# project: BIOS.xcodeproj is generated from this file (on the CI runner via
+# `xcodegen generate`) and is not committed.
+# Docs: https://github.com/yonaskolb/XcodeGen/blob/master/Docs/ProjectSpec.md
+name: BIOS
+
+options:
+  bundleIdPrefix: at.bene
+  developmentLanguage: de
+  createIntermediateGroups: true
+
+targets:
+  BIOS:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: BIOS
+    # Signing defaults (team, style) and APS_ENVIRONMENT live in the xcconfigs.
+    # Settings below would override the xcconfig, so signing is kept out of here.
+    configFiles:
+      Debug: Config/Debug.xcconfig
+      Release: Config/Release.xcconfig
+    settings:
+      base:
+        PRODUCT_NAME: BIOS
+        PRODUCT_BUNDLE_IDENTIFIER: at.bene.bios
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        VERSIONING_SYSTEM: apple-generic
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Config/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Config/BIOS.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: "1"
+        SUPPORTS_MACCATALYST: NO
+        SWIFT_VERSION: "5.0"
+        ENABLE_PREVIEWS: YES
+
+schemes:
+  BIOS:
+    build:
+      targets:
+        BIOS: all
+    run:
+      config: Debug
+    archive:
+      config: Release

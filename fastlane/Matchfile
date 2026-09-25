@@ -1,0 +1,12 @@
+# Shared with Loop (ClemensBene-loops/LoopWorkspace): same private repo, same
+# App Store distribution certificate. BIOS only adds its own profile.
+git_url("https://github.com/ClemensBene-loops/Match-Secrets.git")
+
+storage_mode("git")
+
+type("appstore")
+
+# Safe default. Only the `certs` lane passes readonly: false explicitly.
+readonly(true)
+
+# The docs are available on https://docs.fastlane.tools/actions/match

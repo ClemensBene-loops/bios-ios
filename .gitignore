@@ -1,0 +1,33 @@
+# Generated on CI by `xcodegen generate` (project.yml is the source of truth)
+BIOS.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+
+# Build output
+DerivedData/
+build/
+buildlog/
+artifacts/
+*.ipa
+*.dSYM.zip
+
+# Signing material and secrets: never commit
+*.p8
+*.p12
+*.cer
+*.mobileprovision
+.env
+Config/Local.xcconfig
+
+# fastlane output
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/README.md
+fastlane/screenshots/
+fastlane/test_output/
+fastlane.log
+
+# OS / tools
+.DS_Store
+__pycache__/
+.venv/

@@ -1,0 +1,12 @@
+// Shared build settings for the BIOS app target (referenced from project.yml).
+//
+// Local Xcode builds sign automatically with this team. On CI, fastlane
+// (update_code_signing_settings) switches the target to manual signing with
+// the match App Store profile; those project-level settings win over this file.
+// The Team ID is not a secret.
+
+DEVELOPMENT_TEAM = D457V2W8RG
+CODE_SIGN_STYLE = Automatic
+
+// Optional, git-ignored per-machine overrides (e.g. another team for a local build).
+#include? "Local.xcconfig"
