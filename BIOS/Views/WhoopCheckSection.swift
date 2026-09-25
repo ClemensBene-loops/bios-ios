@@ -2,7 +2,7 @@ import SwiftUI
 
 /// "Whoop-Check": verdict, alerts, values of the evaluated day, last days.
 struct WhoopCheckSection: View {
-    let check: WhoopCheck?
+    let check: BIOSWhoopCheck?
     let isHighlighted: Bool
 
     var body: some View {
@@ -53,7 +53,7 @@ struct WhoopCheckSection: View {
     }
 
     @ViewBuilder
-    private func metricRows(_ day: WhoopDay, check: WhoopCheck) -> some View {
+    private func metricRows(_ day: BIOSWhoopDay, check: BIOSWhoopCheck) -> some View {
         if let rhr = day.rhr {
             LabeledContent("Ruhepuls", value: withDelta(
                 "\(BIOSFormat.number(rhr)) bpm",
@@ -93,7 +93,7 @@ struct WhoopCheckSection: View {
         return "\(BIOSFormat.signed((value / median - 1) * 100)) %"
     }
 
-    private func baselineText(_ check: WhoopCheck) -> String? {
+    private func baselineText(_ check: BIOSWhoopCheck) -> String? {
         guard let rhr = check.baselineMedian["whoop_rhr"],
               let hrv = check.baselineMedian["whoop_hrv"] else {
             return nil
@@ -105,7 +105,7 @@ struct WhoopCheckSection: View {
 
 /// One day in "Letzte Tage": date, Ruhepuls / HRV, marker if flagged.
 struct WhoopDayRow: View {
-    let day: WhoopDay
+    let day: BIOSWhoopDay
 
     var body: some View {
         HStack(spacing: 8) {

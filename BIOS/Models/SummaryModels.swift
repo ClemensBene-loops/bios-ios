@@ -7,7 +7,7 @@ import Foundation
 // app. Shapes follow BIOS `analysis/whoop_check.py` (`evaluate`, `build`) and
 // `analysis/outlook.py` (`build`, `alerts`, `allergy_status`), each plus `text`.
 
-enum AlertSeverity: Equatable {
+enum BIOSAlertSeverity: Equatable {
     case warn
     case info
     case other
@@ -22,7 +22,7 @@ enum AlertSeverity: Equatable {
 }
 
 /// Overall state of a section, drives symbol and color.
-enum OverallStatus: Equatable {
+enum BIOSStatus: Equatable {
     case warn
     case info
     case ok
@@ -30,22 +30,22 @@ enum OverallStatus: Equatable {
 }
 
 /// One entry of an `alerts` (or `hints`) list.
-struct AlertItem: Identifiable, Equatable {
+struct BIOSAlert: Identifiable, Equatable {
     let id: Int
     let kind: String
-    let severity: AlertSeverity
+    let severity: BIOSAlertSeverity
     let text: String
     /// Episode length in days (Whoop alerts only).
     let days: Int?
 
-    static func list(_ json: JSONValue?) -> [AlertItem] {
-        var items: [AlertItem] = []
+    static func list(_ json: JSONValue?) -> [BIOSAlert] {
+        var items: [BIOSAlert] = []
         for element in json?.arrayValue ?? [] {
             guard let text = element["text"]?.stringValue, !text.isEmpty else { continue }
-            items.append(AlertItem(
+            items.append(BIOSAlert(
                 id: items.count,
                 kind: element["kind"]?.stringValue ?? "",
-                severity: AlertSeverity(element["severity"]?.stringValue),
+                severity: BIOSAlertSeverity(element["severity"]?.stringValue),
                 text: text,
                 days: element["days"]?.intValue
             ))
@@ -57,7 +57,7 @@ struct AlertItem: Identifiable, Equatable {
 // MARK: - Whoop check
 
 /// One local day of the Whoop check (`days[]`).
-struct WhoopDay: Identifiable, Equatable {
+struct BIOSWhoopDay: Identifiable, Equatable {
     let date: String
     let rhr: Double?
     let hrv: Double?
@@ -83,13 +83,13 @@ struct WhoopDay: Identifiable, Equatable {
 }
 
 /// `whoop_check.json`: alerts, last days and baseline for the evaluated day.
-struct WhoopCheck {
+struct BIOSWhoopCheck {
     /// Evaluated local date "YYYY-MM-DD", nil when there is no Whoop data.
     let day: String?
-    let alerts: [AlertItem]
+    let alerts: [BIOSAlert]
     let allClear: Bool
     let errors: [String]
-    let days: [WhoopDay]
+    let days: [BIOSWhoopDay]
     /// metric (e.g. "whoop_rhr") -> baseline median
     let baselineMedian: [String: Double]
     /// Number of days in the RHR baseline.
@@ -99,10 +99,10 @@ struct WhoopCheck {
 
     init(json: JSONValue) {
         day = json["day"]?.stringValue
-        alerts = AlertItem.list(json["alerts"])
+        alerts = BIOSAlert.list(json["alerts"])
         allClear = json["all_clear"]?.boolValue ?? false
         errors = json.strings("errors")
-        days = (json["days"]?.arrayValue ?? []).compactMap { WhoopDay(json: $0) }
+        days = (json["days"]?.arrayValue ?? []).compactMap { BIOSWhoopDay(json: $0) }
         var medians: [String: Double] = [:]
         for (metric, value) in json["baseline"]?.objectValue ?? [:] {
             if let median = value["median"]?.numberValue {
@@ -116,9 +116,9 @@ struct WhoopCheck {
     }
 
     /// Last evaluated day (the one the alerts refer to).
-    var latest: WhoopDay? { days.last }
+    var latest: BIOSWhoopDay? { days.last }
 
-    var status: OverallStatus {
+    var status: BIOSStatus {
         if day == nil { return .unknown }
         if alerts.contains(where: { $0.severity == .warn }) { return .warn }
         if !alerts.isEmpty { return .info }
@@ -147,7 +147,7 @@ struct WhoopCheck {
 
 // MARK: - Outlook
 
-struct VirusItem: Identifiable {
+struct BIOSVirus: Identifiable {
     let id: String
     let name: String
     let level: String
@@ -158,13 +158,13 @@ struct VirusItem: Identifiable {
     let onsetKW: Int?
 }
 
-struct VirusRegion: Identifiable {
+struct BIOSVirusRegion: Identifiable {
     let id: String
     let region: String
-    let viruses: [VirusItem]
+    let viruses: [BIOSVirus]
 }
 
-struct PollenAllergen: Identifiable {
+struct BIOSPollenAllergen: Identifiable {
     let id: String
     let name: String
     /// Highest level over the forecast days.
@@ -173,28 +173,28 @@ struct PollenAllergen: Identifiable {
     let peakMean: Double?
 }
 
-struct PollenPlace: Identifiable {
+struct BIOSPollenPlace: Identifiable {
     let id: String
     let place: String
-    let allergens: [PollenAllergen]
+    let allergens: [BIOSPollenAllergen]
 }
 
-struct AllergyStatus {
+struct BIOSAllergyStatus {
     let active: Bool
     let place: String?
     let reasons: [String]
 }
 
 /// `outlook.json`: viruses in wastewater, pollen forecast, allergy block, hints.
-struct Outlook {
+struct BIOSOutlook {
     let today: String?
     let season: String?
-    let alerts: [AlertItem]
-    let regions: [VirusRegion]
-    let pollen: [PollenPlace]
-    let allergy: AllergyStatus?
+    let alerts: [BIOSAlert]
+    let regions: [BIOSVirusRegion]
+    let pollen: [BIOSPollenPlace]
+    let allergy: BIOSAllergyStatus?
     /// Hints with severity "info" (the "warn" ones are already in `alerts`).
-    let infoHints: [AlertItem]
+    let infoHints: [BIOSAlert]
     let errors: [String]
     let text: String?
     let generatedAt: String?
@@ -204,8 +204,8 @@ struct Outlook {
     init(json: JSONValue) {
         today = json["today"]?.stringValue
         season = json["season"]?.stringValue
-        alerts = AlertItem.list(json["alerts"])
-        infoHints = AlertItem.list(json["hints"]).filter { $0.severity == .info }
+        alerts = BIOSAlert.list(json["alerts"])
+        infoHints = BIOSAlert.list(json["hints"]).filter { $0.severity == .info }
         errors = json.strings("errors")
         text = json["text"]?.stringValue
         generatedAt = json["generated_at"]?.stringValue
@@ -217,13 +217,13 @@ struct Outlook {
             let r = rhs == "abwasser_wien" ? 0 : 1
             return l == r ? lhs < rhs : l < r
         }
-        var regions: [VirusRegion] = []
+        var regions: [BIOSVirusRegion] = []
         for key in keys {
             guard let source = sources[key] else { continue }
-            var items: [VirusItem] = []
+            var items: [BIOSVirus] = []
             for virus in source["viruses"]?.arrayValue ?? [] {
                 guard let name = virus["virus"]?.stringValue else { continue }
-                items.append(VirusItem(
+                items.append(BIOSVirus(
                     id: virus["metric"]?.stringValue ?? name,
                     name: name,
                     level: virus["level"]?.stringValue ?? "",
@@ -235,7 +235,7 @@ struct Outlook {
                 ))
             }
             if !items.isEmpty {
-                regions.append(VirusRegion(
+                regions.append(BIOSVirusRegion(
                     id: key,
                     region: source["region"]?.stringValue ?? key,
                     viruses: items
@@ -245,16 +245,16 @@ struct Outlook {
         self.regions = regions
 
         // pollen: [{place, days: [{date, allergen, name, mean, max, level}]}]
-        var places: [PollenPlace] = []
+        var places: [BIOSPollenPlace] = []
         for (index, entry) in (json["pollen"]?.arrayValue ?? []).enumerated() {
             let place = entry["place"]?.stringValue ?? "Ort \(index + 1)"
             var order: [String] = []
-            var worst: [String: PollenAllergen] = [:]
+            var worst: [String: BIOSPollenAllergen] = [:]
             for day in entry["days"]?.arrayValue ?? [] {
                 let key = day["allergen"]?.stringValue ?? day["name"]?.stringValue ?? ""
                 if key.isEmpty { continue }
                 let level = day["level"]?.stringValue ?? "keine"
-                let candidate = PollenAllergen(
+                let candidate = BIOSPollenAllergen(
                     id: key,
                     name: day["name"]?.stringValue ?? key,
                     level: level,
@@ -262,7 +262,7 @@ struct Outlook {
                     peakMean: day["mean"]?.numberValue
                 )
                 if let current = worst[key] {
-                    if Outlook.rank(level) > Outlook.rank(current.level) {
+                    if BIOSOutlook.rank(level) > BIOSOutlook.rank(current.level) {
                         worst[key] = candidate
                     }
                 } else {
@@ -270,7 +270,7 @@ struct Outlook {
                     worst[key] = candidate
                 }
             }
-            places.append(PollenPlace(
+            places.append(BIOSPollenPlace(
                 id: "\(index)-\(place)",
                 place: place,
                 allergens: order.compactMap { worst[$0] }
@@ -279,7 +279,7 @@ struct Outlook {
         pollen = places
 
         if let allergy = json["allergy"], allergy.objectValue != nil {
-            self.allergy = AllergyStatus(
+            self.allergy = BIOSAllergyStatus(
                 active: allergy["active"]?.boolValue ?? false,
                 place: allergy["place"]?.stringValue,
                 reasons: allergy.strings("reasons")
@@ -293,7 +293,7 @@ struct Outlook {
         pollenLevelOrder.firstIndex(of: pollenLevel) ?? 0
     }
 
-    var status: OverallStatus {
+    var status: BIOSStatus {
         if today == nil && regions.isEmpty && pollen.isEmpty { return .unknown }
         if alerts.contains(where: { $0.severity == .warn }) { return .warn }
         if !alerts.isEmpty { return .info }
@@ -311,14 +311,14 @@ struct Outlook {
 }
 
 extension SummaryResponse {
-    var whoop: WhoopCheck? {
+    var whoop: BIOSWhoopCheck? {
         guard let json = whoopCheck, json.objectValue != nil else { return nil }
-        return WhoopCheck(json: json)
+        return BIOSWhoopCheck(json: json)
     }
 
-    var outlookModel: Outlook? {
+    var outlookModel: BIOSOutlook? {
         guard let json = outlook, json.objectValue != nil else { return nil }
-        return Outlook(json: json)
+        return BIOSOutlook(json: json)
     }
 }
 

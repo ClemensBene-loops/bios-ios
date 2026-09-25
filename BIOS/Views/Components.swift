@@ -15,7 +15,7 @@ enum SectionID {
     }
 }
 
-extension OverallStatus {
+extension BIOSStatus {
     var symbol: String {
         switch self {
         case .warn: return "exclamationmark.triangle.fill"
@@ -35,7 +35,7 @@ extension OverallStatus {
     }
 }
 
-extension AlertSeverity {
+extension BIOSAlertSeverity {
     var symbol: String {
         switch self {
         case .warn: return "exclamationmark.triangle.fill"
@@ -53,7 +53,7 @@ extension AlertSeverity {
     }
 }
 
-enum LevelColor {
+enum BIOSLevelColor {
     /// Wastewater level: "sehr niedrig" ... "sehr hoch".
     static func virus(_ level: String) -> Color {
         switch level {
@@ -77,7 +77,7 @@ enum LevelColor {
 
 /// First row of a content section: big status symbol, verdict, date line.
 struct SectionStatusRow: View {
-    let status: OverallStatus
+    let status: BIOSStatus
     let title: String
     let subtitle: String
 
@@ -105,13 +105,15 @@ struct HighlightBackground: View {
     let isOn: Bool
 
     var body: some View {
-        Color(uiColor: .secondarySystemGroupedBackground)
-            .overlay(Color.accentColor.opacity(isOn ? 0.18 : 0))
+        ZStack {
+            Color(uiColor: .secondarySystemGroupedBackground)
+            Color.accentColor.opacity(isOn ? 0.18 : 0)
+        }
     }
 }
 
 struct AlertRow: View {
-    let alert: AlertItem
+    let alert: BIOSAlert
 
     var body: some View {
         Label {

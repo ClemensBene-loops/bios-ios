@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Loads `/v1/summary` and keeps the last good response on disk
 /// (Application Support/summary.json), so the app shows the latest state
@@ -45,7 +46,7 @@ final class SummaryStore: ObservableObject {
         } catch {
             if !Self.isCancellation(error) {
                 lastError = error.localizedDescription
-                Log.push.error("Summary refresh failed: \(error.localizedDescription, privacy: .public)")
+                BIOSLog.push.error("Summary refresh failed: \(error.localizedDescription, privacy: .public)")
             }
         }
         isLoading = false
@@ -92,7 +93,7 @@ final class SummaryStore: ObservableObject {
             let data = try JSONEncoder().encode(CachedSummary(fetchedAt: fetchedAt, summary: summary))
             try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         } catch {
-            Log.push.error("Summary cache write failed: \(error.localizedDescription, privacy: .public)")
+            BIOSLog.push.error("Summary cache write failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 }

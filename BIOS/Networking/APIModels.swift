@@ -22,7 +22,7 @@ struct DeviceRegistration: Encodable, Sendable {
 /// Response of `GET {base}/v1/summary`.
 ///
 /// The inner documents are the server's `whoop_check.json` and `outlook.json`,
-/// kept as generic JSON and read defensively by `WhoopCheck` / `Outlook`
+/// kept as generic JSON and read defensively by `BIOSWhoopCheck` / `BIOSOutlook`
 /// (SummaryModels.swift), so a new or changed server field never breaks decoding.
 /// Codable so the last good response can be cached on disk.
 struct SummaryResponse: Codable, Sendable {

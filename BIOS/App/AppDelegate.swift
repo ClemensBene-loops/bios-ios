@@ -89,11 +89,11 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
                     UIApplication.shared.registerForRemoteNotifications()
                 } else {
                     AppState.shared.authorization = .denied
-                    Log.push.info("Push permission denied")
+                    BIOSLog.push.info("Push permission denied")
                 }
             } catch {
                 AppState.shared.authorization = .failed(error.localizedDescription)
-                Log.push.error("Push authorization failed: \(error.localizedDescription, privacy: .public)")
+                BIOSLog.push.error("Push authorization failed: \(error.localizedDescription, privacy: .public)")
             }
         }
     }
@@ -105,7 +105,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
     ) {
         let token = deviceToken.map { String(format: "%02x", $0) }.joined()
-        Log.push.info("APNs token \(String(token.prefix(8)), privacy: .public)... (\(AppConfig.apnsEnvironment, privacy: .public))")
+        BIOSLog.push.info("APNs token \(String(token.prefix(8)), privacy: .public)... (\(AppConfig.apnsEnvironment, privacy: .public))")
         AppState.shared.registration = .registered(token: token)
         uploadToken(token)
     }
@@ -114,7 +114,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFailToRegisterForRemoteNotificationsWithError error: Error
     ) {
-        Log.push.error("APNs registration failed: \(error.localizedDescription, privacy: .public)")
+        BIOSLog.push.error("APNs registration failed: \(error.localizedDescription, privacy: .public)")
         AppState.shared.registration = .failed(error.localizedDescription)
     }
 
@@ -122,7 +122,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 
     private func uploadToken(_ token: String) {
         guard let client = APIClient.fromConfig() else {
-            Log.push.info("Server not configured, token not uploaded")
+            BIOSLog.push.info("Server not configured, token not uploaded")
             AppState.shared.upload = .notConfigured
             return
         }
@@ -141,11 +141,11 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
                 try await client.registerDevice(registration)
                 if Task.isCancelled { return }
                 AppState.shared.upload = .succeeded(Date())
-                Log.push.info("Token uploaded")
+                BIOSLog.push.info("Token uploaded")
             } catch {
                 if Task.isCancelled { return }
                 AppState.shared.upload = .failed(error.localizedDescription)
-                Log.push.error("Token upload failed: \(error.localizedDescription, privacy: .public)")
+                BIOSLog.push.error("Token upload failed: \(error.localizedDescription, privacy: .public)")
             }
         }
     }
@@ -198,6 +198,6 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
     }
 }
 
-enum Log {
+enum BIOSLog {
     static let push = Logger(subsystem: "at.bene.bios", category: "push")
 }

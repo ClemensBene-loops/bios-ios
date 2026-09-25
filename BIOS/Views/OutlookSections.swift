@@ -3,7 +3,7 @@ import SwiftUI
 /// "Ausblick" (verdict, alerts, allergy, hints) plus one section per virus
 /// region and one for pollen.
 struct OutlookSections: View {
-    let outlook: Outlook?
+    let outlook: BIOSOutlook?
     let isHighlighted: Bool
 
     var body: some View {
@@ -82,7 +82,7 @@ struct OutlookSections: View {
 }
 
 struct AllergyRow: View {
-    let allergy: AllergyStatus
+    let allergy: BIOSAllergyStatus
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -111,12 +111,12 @@ struct AllergyRow: View {
 }
 
 struct VirusRow: View {
-    let virus: VirusItem
+    let virus: BIOSVirus
 
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: trendSymbol)
-                .foregroundStyle(LevelColor.virus(virus.level))
+                .foregroundStyle(BIOSLevelColor.virus(virus.level))
                 .accessibilityLabel(virus.trend)
             VStack(alignment: .leading, spacing: 2) {
                 Text(virus.name)
@@ -127,7 +127,7 @@ struct VirusRow: View {
             Spacer(minLength: 8)
             Text(virus.level)
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(LevelColor.virus(virus.level))
+                .foregroundStyle(BIOSLevelColor.virus(virus.level))
         }
     }
 
@@ -162,7 +162,7 @@ struct VirusRow: View {
 }
 
 struct PollenRow: View {
-    let place: PollenPlace
+    let place: BIOSPollenPlace
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -176,7 +176,7 @@ struct PollenRow: View {
             ForEach(place.allergens) { allergen in
                 HStack(spacing: 8) {
                     Circle()
-                        .fill(LevelColor.pollen(allergen.level))
+                        .fill(BIOSLevelColor.pollen(allergen.level))
                         .frame(width: 8, height: 8)
                     Text(allergen.name)
                     Spacer(minLength: 8)
@@ -189,8 +189,8 @@ struct PollenRow: View {
         .padding(.vertical, 2)
     }
 
-    private func levelText(_ allergen: PollenAllergen) -> String {
-        guard Outlook.rank(allergen.level) >= 2, let date = allergen.peakDate else {
+    private func levelText(_ allergen: BIOSPollenAllergen) -> String {
+        guard BIOSOutlook.rank(allergen.level) >= 2, let date = allergen.peakDate else {
             return allergen.level
         }
         return "\(allergen.level) am \(BIOSFormat.day(date))"
