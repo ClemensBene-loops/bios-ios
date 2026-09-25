@@ -57,7 +57,9 @@ final class DashboardStore: ObservableObject {
         do {
             let json = try await client.fetchDashboard()
             let now = Date()
-            dashboard = DashboardModel(json: json)
+            let model = DashboardModel(json: json)
+            dashboard = model
+            EventStore.shared.seed(from: model.events)
             fetchedAt = now
             lastSuccess = now
             lastError = nil

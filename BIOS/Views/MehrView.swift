@@ -79,6 +79,16 @@ struct MehrView: View {
             }
 
             Section {
+                NavigationLink(value: DetailRoute.alkohol) {
+                    Label("Alkohol-Tage", systemImage: "wineglass")
+                }
+            } header: {
+                Text("Kontext")
+            } footer: {
+                Text("Rückwirkend markieren, auch per Siri: \"Alkohol in BIOS\".")
+            }
+
+            Section {
                 LabeledContent("Allergene", value: allergensText(dashboard))
                 LabeledContent("Heimatort", value: dashboard?.pollen?.place ?? dashboard?.environment?.allergy?.place ?? "n. v.")
                 Button {

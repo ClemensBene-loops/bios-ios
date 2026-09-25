@@ -15,13 +15,16 @@ struct BIOSApp: App {
                 state: AppState.shared,
                 router: Router.shared,
                 dashboardStore: DashboardStore.shared,
-                seriesStore: SeriesStore.shared
+                seriesStore: SeriesStore.shared,
+                eventStore: EventStore.shared
             )
             .onChange(of: scenePhase) { _, newPhase in
                 if newPhase == .active {
                     appDelegate.refreshAuthorizationIfNeeded()
                     Task { @MainActor in
                         await DashboardStore.shared.refresh()
+                        // Offline queue of alcohol marks: retry on every foreground.
+                        await EventStore.shared.flush()
                     }
                 }
             }

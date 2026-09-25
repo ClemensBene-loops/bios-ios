@@ -26,6 +26,8 @@ struct HeuteView: View {
 
                 HeroCard(infection: dashboard?.infection, glucoseTile: dashboard?.glucose)
 
+                AlcoholCard()
+
                 OutlookCard(outlook: dashboard?.outlook) {
                     router.show(.umwelt)
                 }
@@ -176,7 +178,8 @@ struct StandLine: View {
         guard let stand else {
             return dashboardStore.isLoading ? "Wird geladen ..." : "Noch nicht geladen"
         }
-        let base = "Stand \(BIOSFormat.relative(stand))"
+        let when = Calendar.current.isDateInToday(stand) ? BIOSFormat.time(stand) : BIOSFormat.relative(stand)
+        let base = "Stand \(when)"
         if dashboardStore.showsStaleData {
             return base + (dashboardStore.isOffline ? " · offline" : " · nicht aktualisiert")
         }

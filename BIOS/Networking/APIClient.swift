@@ -90,6 +90,29 @@ struct APIClient: Sendable {
         return try await getJSON(path: ["v1", "series"], query: query)
     }
 
+    /// `POST /v1/events`: marks a day (idempotent per date + kind).
+    func postEvent(date: String, kind: String, note: String? = nil) async throws {
+        var request = makeRequest(path: ["v1", "events"], method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(EventBody(date: date, kind: kind, note: note))
+        _ = try await send(request)
+    }
+
+    /// `DELETE /v1/events?date=...&kind=...`: removes a mark (no error if absent).
+    func deleteEvent(date: String, kind: String) async throws {
+        let request = makeRequest(
+            path: ["v1", "events"],
+            query: [URLQueryItem(name: "date", value: date), URLQueryItem(name: "kind", value: kind)],
+            method: "DELETE"
+        )
+        _ = try await send(request)
+    }
+
+    /// `GET /v1/events?days=N`: marked days of the last N days (N <= 400).
+    func fetchEvents(days: Int) async throws -> JSONValue {
+        try await getJSON(path: ["v1", "events"], query: [URLQueryItem(name: "days", value: String(days))])
+    }
+
     /// GET returning a JSON object (anything else is an invalid response).
     func getJSON(path: [String], query: [URLQueryItem] = []) async throws -> JSONValue {
         let request = makeRequest(path: path, query: query, method: "GET")

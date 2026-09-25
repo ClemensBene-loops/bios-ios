@@ -104,6 +104,8 @@ struct DashboardModel {
     let push: ServerPushModel?
     /// Server-side problems ("whoop_check.json fehlt"), shown in Mehr.
     let errors: [String]
+    /// Context events (alcohol), additive field of Phase 2c.
+    let events: DashboardEventsModel?
 
     /// Major schema version this app understands.
     static let supportedSchema = 1
@@ -117,6 +119,7 @@ struct DashboardModel {
         environment = json.obj("environment").map { EnvironmentModel(json: $0) }
         push = json.obj("push").map { ServerPushModel(json: $0) }
         errors = json.strings("errors")
+        events = json.obj("events").map { DashboardEventsModel(json: $0) }
 
         let tiles = json.obj("tiles")
         if let wien = tiles?.obj("viruses_wien") {
@@ -337,6 +340,8 @@ struct InfectionModel {
     let insulin: InsulinSignal?
     let baseline: InfectionBaseline?
     let days: [InfectionDay]
+    /// "Erholung gedrückt, vermutlich Alkohol/Training" (Phase 2c, optional).
+    let confounderNote: String?
 
     init(json: JSONValue) {
         day = json.str("day")
@@ -358,6 +363,9 @@ struct InfectionModel {
         insulin = json.obj("insulin_signal").map { InsulinSignal(json: $0) }
         baseline = json.obj("baseline").map { InfectionBaseline(json: $0) }
         days = json.list("days").compactMap { InfectionDay(json: $0) }
+        confounderNote = json.str("confounder_note")
+            ?? json.obj("confounder")?.str("text")
+            ?? json.str("confounder")
         if let headline = json.str("headline") {
             self.headline = headline
         } else {
@@ -817,6 +825,26 @@ struct EnvironmentModel {
         pollen = json.list("pollen").filter { $0.objectValue != nil }.map { PollenModel(json: $0) }
         allergy = json.obj("allergy").map { AllergyModel(json: $0) }
         hints = BIOSAlert.list(json.list("hints"))
+    }
+}
+
+// MARK: - Events
+
+/// Dashboard `events` block (additive, lenient): today/yesterday marks and
+/// recent alcohol days (strings or `{date}` objects).
+struct DashboardEventsModel {
+    let todayMarked: Bool?
+    let yesterdayMarked: Bool?
+    let alcoholRecent: [String]
+
+    init(json: JSONValue) {
+        todayMarked = json["today_marked"]?.boolValue
+        yesterdayMarked = json["yesterday_marked"]?.boolValue
+        var days: [String] = json.strings("alcohol_recent")
+        if days.isEmpty {
+            days = json.list("alcohol_recent").compactMap { $0.str("date") }
+        }
+        alcoholRecent = days.map { String($0.prefix(10)) }
     }
 }
 

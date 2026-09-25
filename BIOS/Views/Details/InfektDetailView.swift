@@ -85,6 +85,10 @@ struct InfektSummaryCard: View {
                 .foregroundStyle(infection?.alerts.isEmpty == false ? BIOSTheme.text1 : BIOSTheme.text2)
                 .fixedSize(horizontal: false, vertical: true)
 
+            if let note = infection?.confounderNote {
+                ContextLine(symbol: "wineglass", title: note, detail: nil, style: .neutral)
+            }
+
             if let chips = infection?.chips, !chips.isEmpty {
                 FlowLayout(spacing: 7, lineSpacing: 7) {
                     ForEach(chips) { chip in

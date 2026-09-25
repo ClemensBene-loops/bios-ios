@@ -48,9 +48,11 @@ enum DetailRoute: String, CaseIterable, Hashable {
     case recovery
     case insulin
     case loop
+    case alkohol
 
     var title: String {
         switch self {
+        case .alkohol: return "Alkohol-Tage"
         case .infekt: return "Infekt-Check"
         case .viren: return "Viren im Abwasser"
         case .pollen: return "Pollen"
@@ -65,6 +67,7 @@ enum DetailRoute: String, CaseIterable, Hashable {
     var homeTab: AppTab {
         switch self {
         case .viren, .pollen: return .umwelt
+        case .alkohol: return .mehr
         default: return .heute
         }
     }
@@ -80,6 +83,7 @@ enum DetailRoute: String, CaseIterable, Hashable {
         case "recovery", "schlaf", "sleep": self = .recovery
         case "insulin": self = .insulin
         case "loop", "nightscout": self = .loop
+        case "alkohol", "alcohol", "events", "kalender": self = .alkohol
         default: return nil
         }
     }

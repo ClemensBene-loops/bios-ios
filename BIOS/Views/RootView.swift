@@ -8,6 +8,7 @@ struct RootView: View {
     @ObservedObject var router: Router
     @ObservedObject var dashboardStore: DashboardStore
     @ObservedObject var seriesStore: SeriesStore
+    @ObservedObject var eventStore: EventStore
 
     var body: some View {
         TabView(selection: $router.selectedTab) {
@@ -44,9 +45,21 @@ struct RootView: View {
         .environmentObject(router)
         .environmentObject(dashboardStore)
         .environmentObject(seriesStore)
+        .environmentObject(eventStore)
         .environment(\.locale, BIOSFormat.locale)
+        .overlay(alignment: .bottom) {
+            if let toast = eventStore.toast {
+                ToastView(text: toast)
+                    .padding(.bottom, 96)
+                    .transition(.opacity)
+                    .allowsHitTesting(false)
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: eventStore.toast)
         .task {
             await dashboardStore.refresh()
+            await eventStore.flush()
+            await eventStore.refresh()
         }
         .onAppear {
             consumePendingOpen()
@@ -90,6 +103,7 @@ struct DetailView: View {
             case .recovery: RecoveryDetailView()
             case .insulin: InsulinDetailView()
             case .loop: LoopDetailView()
+            case .alkohol: AlcoholCalendarView()
             }
         }
         .navigationTitle(route.title)

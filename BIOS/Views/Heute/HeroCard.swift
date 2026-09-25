@@ -98,6 +98,16 @@ struct HeroCard: View {
                 .padding(.top, 12)
             }
 
+            if let note = infection?.confounderNote {
+                ContextLine(
+                    symbol: "wineglass",
+                    title: note,
+                    detail: nil,
+                    style: .neutral
+                )
+                .padding(.top, 12)
+            }
+
             if let reason = glucoseNotEvaluableReason {
                 ContextLine(
                     symbol: "circle.dashed",
@@ -162,6 +172,7 @@ struct HeroCard: View {
         }
         if let subline = infection.subline { parts.append(subline) }
         if infection.resistUp { parts.append(infection.contextText ?? "Dazu Glukose/Insulinbedarf erhöht") }
+        if let note = infection.confounderNote { parts.append(note) }
         if let reason = glucoseNotEvaluableReason { parts.append("Glukose nicht bewertbar: \(reason)") }
         return parts.joined(separator: ". ")
     }
