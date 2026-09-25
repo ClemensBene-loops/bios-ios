@@ -2,13 +2,22 @@ import SwiftUI
 
 @main
 struct BIOSApp: App {
-    /// UIKit hooks (remote notification registration and the device token
-    /// callback in Phase 2) live in AppDelegate.
+    /// UIKit hooks (push permission, notification categories, remote
+    /// notification registration and the device token upload) live in AppDelegate.
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(state: AppState.shared, store: SummaryStore.shared)
+                .onChange(of: scenePhase) { _, newPhase in
+                    if newPhase == .active {
+                        appDelegate.refreshAuthorizationIfNeeded()
+                        Task { @MainActor in
+                            await SummaryStore.shared.refresh()
+                        }
+                    }
+                }
         }
     }
 }
