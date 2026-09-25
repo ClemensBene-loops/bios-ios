@@ -19,6 +19,11 @@ The server side (API, APNs channel, cron jobs) lives in the private BIOS repo
 | Minimum iOS | 17.0, iPhone only, portrait |
 | GitHub | `ClemensBene-loops/bios-ios` (public, organization on the free plan) |
 
+Status (2026-09-25): build 2 (`1.0 (2)`, from branch `phase2-push`) is installed
+via TestFlight, the device token is registered at the server and a forced Whoop
+check was sent via APNs. The on-device look of that push (sender "BIOS" with icon)
+is still awaiting the owner's confirmation.
+
 This repo is **public**: no secrets, no server URL, no IPA and no personal data
 are ever committed or uploaded as workflow artifacts.
 
@@ -100,19 +105,25 @@ Names only; values live in GitHub (and in the VM `.env` for the server side).
 - The **APNs key** (`.p8`, developer portal > Keys, "Apple Push Notifications
   service") is a different key from `FASTLANE_KEY`. It lives only on the VM
   (`/opt/bios/data/private/`, referenced by `BIOS_APNS_KEY_ID`, `BIOS_APNS_TEAM_ID`,
-  `BIOS_APNS_KEY_PATH`), never in GitHub.
+  `BIOS_APNS_KEY_PATH`), never in GitHub. One key serves sandbox and production
+  for all apps of the team. The browser may save the portal download as
+  `AuthKey_<KEY_ID>.p8.txt`: rename it to `.p8` before copying it to the VM.
 
 ## TestFlight flow
 
-1. Push the code to the branch to build, then run "4. Build BIOS" on that
-   branch in the Actions tab.
+1. Push the code to the branch to build. In the Actions tab open
+   "4. Build BIOS" > "Run workflow" and pick that branch in the "Use workflow from"
+   selector (feature branches build without merging to `main`; the build number
+   is always latest TestFlight + 1).
 2. App Store Connect processes the build. "Keine Builds verfügbar" or the status
    "Bereit zur Übermittlung" in the meantime is normal; the first build of the app
    took much longer than later ones. `ITSAppUsesNonExemptEncryption = false` in
    Info.plist skips the export compliance question.
 3. TestFlight > internal group **"Ich"** gets the build (internal testing needs no
    beta review). Every tester must be an App Store Connect user of the team.
-4. On the iPhone: TestFlight app > BIOS > Install or Update.
+4. On the iPhone: TestFlight app > BIOS > Install. A new build only shows up
+   as "Aktualisieren" (Update) in TestFlight after processing has finished; until
+   then TestFlight still offers the previous build.
 5. TestFlight builds expire after 90 days. Run workflow 4 again before that.
 
 ## Registering a new device
@@ -127,7 +138,9 @@ Names only; values live in GitHub (and in the VM `.env` for the server side).
 4. Check on the VM: the token appears in `/opt/bios/data/private/apns_tokens.json`
    (`environment: production` for TestFlight builds).
 5. Test in `/opt/bios`: `python -m reports.whoop_check --notify --force` sends
-   the current Whoop check through all configured channels.
+   the current Whoop check through all configured channels. `--force` rewrites
+   `data/outlook/whoop_check.state.json` (`sent_at`, `channels`): back it up before
+   the test and restore it afterwards, otherwise the cron's reminder policy shifts.
 
 No UDID registration or new profile is needed: App Store/TestFlight profiles are
 not device-bound. Removing a device: `DELETE /v1/devices/{token}`, or delete the
@@ -197,7 +210,8 @@ running in parallel; one failing channel never blocks the others.
 - **No push arrives:** check in this order: push status footer in the app
   (permission granted, token uploaded), token in `apns_tokens.json` with
   `environment: production`, APNs key and `BIOS_APNS_*` in the VM `.env`,
-  `journalctl -u bios-api` and the cron log for `apns` warnings. `BadDeviceToken`
+  `journalctl -u bios-api` and the cron log for `apns` warnings (successful
+  deliveries are not logged, only failures). `BadDeviceToken`
   means a token/environment mismatch: the server retries the other environment
   once and corrects the entry.
 - **Upload fails with 401/403** ("Server lehnt das Secret ab"): `BIOS_API_SECRET`
