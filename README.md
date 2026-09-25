@@ -23,7 +23,7 @@ Status (2026-09-25): build 2 (`1.0 (2)`, from branch `phase2-push`) is installed
 via TestFlight, the device token is registered at the server and a forced Whoop
 check was sent via APNs. The owner confirmed on 2026-09-25 that the push arrives
 on the iPhone with sender "BIOS" and the app icon (end-to-end accepted). ntfy stays
-active in parallel on the server for now. Build  expires 90 days after its
+active in parallel on the server for now. Build `1.0 (2)` expires 90 days after its
 upload (around 2026-12-24): upload a new build before then (see TestFlight flow).
 
 This repo is **public**: no secrets, no server URL, no IPA and no personal data
@@ -126,7 +126,7 @@ Names only; values live in GitHub (and in the VM `.env` for the server side).
 4. On the iPhone: TestFlight app > BIOS > Install. A new build only shows up
    as "Aktualisieren" (Update) in TestFlight after processing has finished; until
    then TestFlight still offers the previous build.
-5. TestFlight builds expire after 90 days (build : around 2026-12-24);
+5. TestFlight builds expire after 90 days (build `1.0 (2)`: around 2026-12-24);
    after that the app no longer launches and no push arrives. Run workflow 4
    again before that. Idea: a scheduled run of workflow 4 (like Loop's monthly
    build) so a fresh build is always in TestFlight.
