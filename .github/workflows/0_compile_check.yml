@@ -1,0 +1,122 @@
+name: 0. Compile Check
+run-name: Compile Check (${{ github.ref_name }})
+
+# Compiles the app for the iOS Simulator without code signing on every push to a
+# branch other than main. No Apple contact, no secrets, no artifacts except the
+# build log on failure (the log contains only compiler output, never secrets:
+# Config/Info.plist stays empty here). Feedback loop for Swift changes without a Mac.
+on:
+  push:
+    branches-ignore:
+      - main
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "tools/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compile-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compile:
+    name: Compile (Simulator, unsigned)
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      XCODE_VERSION: "26.5"
+    steps:
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          echo "Installed Xcodes:"
+          ls -d /Applications/Xcode*.app || true
+          XCODE="/Applications/Xcode_${XCODE_VERSION}.app"
+          if [ ! -d "$XCODE" ]; then
+            XCODE="$(ls -d /Applications/Xcode_*.app 2>/dev/null | grep -vi beta | sort -V | tail -n 1 || true)"
+            echo "::warning::Xcode ${XCODE_VERSION} not found on this runner, using ${XCODE:-the runner default}."
+          fi
+          if [ -n "$XCODE" ]; then
+            sudo xcode-select --switch "$XCODE/Contents/Developer"
+          fi
+          xcodebuild -version
+
+      - name: Checkout Repo
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Generate Xcode project
+        run: |
+          set -euo pipefail
+          command -v xcodegen >/dev/null || brew install xcodegen
+          xcodegen --version
+          xcodegen generate
+
+      - name: Build for iOS Simulator (no signing)
+        # Default shell is bash -eo pipefail: a failing xcodebuild fails the step.
+        run: |
+          mkdir -p buildlog
+          xcodebuild build \
+            -project BIOS.xcodeproj \
+            -scheme BIOS \
+            -configuration Release \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            2>&1 | tee buildlog/xcodebuild.log
+
+      - name: Summary (errors and warnings)
+        if: always()
+        run: |
+          set +e +o pipefail
+          LOG=buildlog/xcodebuild.log
+          {
+            echo "## Compile Check: ${GITHUB_REF_NAME} @ ${GITHUB_SHA::7}"
+            echo
+            if [ ! -f "$LOG" ]; then
+              echo "No build log (the build step did not run)."
+              exit 0
+            fi
+            ERRORS="$(grep -E ': error: |^error: ' "$LOG" | sort -u || true)"
+            WARNINGS="$(grep -E ': warning: ' "$LOG" | grep -v 'appintentsmetadataprocessor' | sort -u || true)"
+            NE=$( [ -n "$ERRORS" ] && printf '%s\n' "$ERRORS" | wc -l | tr -d ' ' || echo 0)
+            NW=$( [ -n "$WARNINGS" ] && printf '%s\n' "$WARNINGS" | wc -l | tr -d ' ' || echo 0)
+            echo "- Errors: $NE"
+            echo "- Warnings: $NW"
+            if grep -q '\*\* BUILD SUCCEEDED \*\*' "$LOG"; then
+              echo "- Result: BUILD SUCCEEDED"
+            else
+              echo "- Result: BUILD FAILED"
+            fi
+            if [ -n "$ERRORS" ]; then
+              echo
+              echo "### Errors"
+              echo '```'
+              printf '%s\n' "$ERRORS" | sed "s#${GITHUB_WORKSPACE}/##" | head -n 100
+              echo '```'
+            fi
+            if [ -n "$WARNINGS" ]; then
+              echo
+              echo "### Warnings"
+              echo '```'
+              printf '%s\n' "$WARNINGS" | sed "s#${GITHUB_WORKSPACE}/##" | head -n 100
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: compile-check-log
+          path: buildlog
+          retention-days: 7
+          if-no-files-found: ignore
