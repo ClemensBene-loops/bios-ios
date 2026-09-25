@@ -21,8 +21,33 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         // Must be set before launch finishes so a tap that cold-starts the app
         // is still delivered to the delegate.
         UNUserNotificationCenter.current().delegate = notificationDelegate
+        registerNotificationCategories()
         requestAuthorizationAndRegister()
         return true
+    }
+
+    /// Categories the server sets as `aps.category`. No custom actions: a tap
+    /// opens the app. With hidden previews the title (emoji + verdict) stays
+    /// visible; grouped notifications get a German summary line.
+    private func registerNotificationCategories() {
+        let definitions: [(id: String, summary: String)] = [
+            ("WHOOP_ALERT", "%u weitere Whoop-Meldungen"),
+            ("WHOOP_CLEAR", "%u weitere Whoop-Meldungen"),
+            ("OUTLOOK_ALERT", "%u weitere Ausblick-Meldungen"),
+            ("OUTLOOK_WEEKLY", "%u weitere Ausblick-Meldungen"),
+        ]
+        var categories = Set<UNNotificationCategory>()
+        for definition in definitions {
+            categories.insert(UNNotificationCategory(
+                identifier: definition.id,
+                actions: [],
+                intentIdentifiers: [],
+                hiddenPreviewsBodyPlaceholder: "BIOS-Meldung",
+                categorySummaryFormat: definition.summary,
+                options: [.hiddenPreviewsShowTitle]
+            ))
+        }
+        UNUserNotificationCenter.current().setNotificationCategories(categories)
     }
 
     /// Called when the app becomes active: picks up a permission the user

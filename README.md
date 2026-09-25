@@ -12,6 +12,10 @@ key + fastlane match. Full documentation follows in Phase 4.
   permission, registers with APNs and uploads the device token on every launch via
   `Networking/APIClient.swift` (`POST {BIOSAPIBaseURL}/v1/devices`, `Authorization: Bearer <BIOSAPISecret>`,
   `environment` = `sandbox` for Debug, `production` for Release/TestFlight from `APS_ENVIRONMENT`).
+  The main view (`Views/ContentView.swift`) shows the Whoop check and outlook from
+  `GET /v1/summary` (cached in Application Support for offline use); a push tap scrolls to
+  the section of its `thread-id`. Notification categories: `WHOOP_ALERT`, `WHOOP_CLEAR`,
+  `OUTLOOK_ALERT`, `OUTLOOK_WEEKLY`.
 - `Config/`: Info.plist, entitlements (Push), xcconfigs (team, `APS_ENVIRONMENT`).
 - `fastlane/`: lanes `validate_secrets`, `identifiers`, `certs`, `build`, `release`.
 - `tools/make_icon.py`: renders the app icon (Pillow + numpy), preview in `docs/icon-preview.png`.

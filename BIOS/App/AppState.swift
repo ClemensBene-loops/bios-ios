@@ -85,8 +85,8 @@ final class AppState: ObservableObject {
     /// Last push received in the foreground or opened by a tap.
     @Published private(set) var lastPush: PushInfo?
 
-    /// Last tapped push, kept for routing (Phase 3 opens the matching view by
-    /// `threadID`, then sets this back to nil).
+    /// Last tapped push, waiting for routing. ContentView consumes it (scrolls
+    /// to the section for its `threadID`, refreshes) and sets it back to nil.
     @Published var pendingOpen: PushInfo?
 
     init() {}
