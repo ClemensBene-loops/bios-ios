@@ -48,6 +48,8 @@ struct RootView: View {
         .environmentObject(eventStore)
         .environmentObject(SupplementStore.shared)
         .environmentObject(MedicationStore.shared)
+        .environmentObject(MedicationPlanStore.shared)
+        .environmentObject(VitalsStore.shared)
         .environment(\.locale, BIOSFormat.locale)
         .overlay(alignment: .bottom) {
             if let toast = eventStore.toast {
@@ -65,6 +67,9 @@ struct RootView: View {
             await SupplementStore.shared.flush()
             await SupplementStore.shared.refresh()
             await MedicationStore.shared.flush()
+            await MedicationPlanStore.shared.flush()
+            await MedicationPlanStore.shared.refresh()
+            await VitalsStore.shared.flush()
         }
         .onAppear {
             consumePendingOpen()

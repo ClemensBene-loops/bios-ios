@@ -61,7 +61,7 @@ struct BloodPressureDetailView: View {
     var body: some View {
         let pressure = dashboardStore.dashboard?.bloodPressure
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            LazyVStack(alignment: .leading, spacing: 12) {
                 StoreStatusBanner()
                 if let pressure {
                     BloodPressureSummaryCard(pressure: pressure)
@@ -143,7 +143,7 @@ struct BloodPressureSeriesSection: View {
     let days: Int
 
     var body: some View {
-        let spec = BloodPressureSeriesSection.spec(sys: sys?.model, dia: dia?.model, pressure: pressure)
+        let spec = BloodPressureSeriesSection.spec(sys: sys?.model, dia: dia?.model, pulse: pulse?.model, pressure: pressure)
         let rows = BloodPressureSeriesSection.rows(sys: sys?.model, dia: dia?.model, pulse: pulse?.model)
         ChartCard(
             label: "Blutdruck",
@@ -253,12 +253,17 @@ struct BloodPressureSeriesSection: View {
         return rows.sorted { $0.date > $1.date }
     }
 
-    static func spec(sys: SeriesModel?, dia: SeriesModel?, pressure: BloodPressureTileModel?) -> ChartSpec {
+    static func spec(sys: SeriesModel?, dia: SeriesModel?, pulse: SeriesModel? = nil,
+                     pressure: BloodPressureTileModel?) -> ChartSpec {
         var spec = ChartSpec()
         spec.unit = ChartXUnit.from(resolution: sys?.resolution ?? "day")
         spec.height = 170
         spec.valueUnit = "mmHg"
-        spec.seriesLabels = ["sys": "Sys", "dia": "Dia", "praxissys": "Praxis sys", "praxisdia": "Praxis dia"]
+        spec.seriesLabels = ["sys": "Sys", "dia": "Dia", "puls": "Puls", "praxissys": "Praxis sys", "praxisdia": "Praxis dia"]
+        // Bubble: sys, dia, pulse of the reading under the finger; clinic values and
+        // pulse only when measured at exactly that time (no carry-forward).
+        spec.seriesOrder = ["sys", "dia", "puls", "praxissys", "praxisdia"]
+        spec.exactOnlySeries = ["puls", "praxissys", "praxisdia"]
         let homeSys = (sys?.points ?? []).filter { !BloodPressureReading.isClinic($0.setting) }
         let homeDia = (dia?.points ?? []).filter { !BloodPressureReading.isClinic($0.setting) }
         let sysLine = ChartSpec.linePoints(homeSys, series: "sys", color: BIOSTheme.rhr)
@@ -278,6 +283,14 @@ struct BloodPressureSeriesSection: View {
             }
         }
         spec.extraPoints = extra
+        var pulsePoints: [ChartLinePoint] = []
+        for point in pulse?.points ?? [] {
+            if let value = point.value {
+                pulsePoints.append(ChartLinePoint(id: 200_000 + pulsePoints.count, series: "puls-0", date: point.date,
+                                                  value: value, color: BIOSTheme.text2))
+            }
+        }
+        spec.bubbleOnly = pulsePoints
         let homeS = pressure?.homeSys ?? 135
         let homeD = pressure?.homeDia ?? 85
         let targetS = pressure?.targetSys ?? 130

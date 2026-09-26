@@ -1,15 +1,27 @@
 import SwiftUI
 
 /// Loads one series (memory, disk cache, server) and hands its entry to `content`.
+/// Observes only the slot of its own request.
 struct SeriesReader<Content: View>: View {
     @EnvironmentObject var series: SeriesStore
     let request: SeriesStore.Request
     @ViewBuilder let content: (SeriesStore.Entry?) -> Content
 
     var body: some View {
-        content(series.entry(request))
+        SeriesSlotReader(slot: series.slot(request), store: series, request: request, content: content)
+    }
+}
+
+private struct SeriesSlotReader<Content: View>: View {
+    @ObservedObject var slot: SeriesSlot
+    let store: SeriesStore
+    let request: SeriesStore.Request
+    let content: (SeriesStore.Entry?) -> Content
+
+    var body: some View {
+        content(slot.entry)
             .task(id: request) {
-                await series.load(request)
+                await store.load(request)
             }
     }
 }
@@ -28,6 +40,8 @@ enum MetricKind {
     case per10g
     case insAuto
     case infectionScore
+    /// Body temperature readings entered in the app (`body_temp`, one point per reading).
+    case bodyTemp
 
     var metric: String {
         switch self {
@@ -43,6 +57,7 @@ enum MetricKind {
         case .per10g: return "ins_per_10g"
         case .insAuto: return "ins_auto"
         case .infectionScore: return "infection_score"
+        case .bodyTemp: return "body_temp"
         }
     }
 
@@ -60,6 +75,7 @@ enum MetricKind {
         case .per10g: return "Insulin/10 g KH"
         case .insAuto: return "Auto-Bolus (Loop-Korrekturen)"
         case .infectionScore: return "Infekt-Score"
+        case .bodyTemp: return "Körpertemperatur"
         }
     }
 
@@ -75,6 +91,7 @@ enum MetricKind {
         case .tdd, .per10g: return "syringe"
         case .insAuto: return nil
         case .infectionScore: return "thermometer.medium"
+        case .bodyTemp: return "thermometer"
         }
     }
 
@@ -92,6 +109,7 @@ enum MetricKind {
         case .per10g: return BIOSTheme.per10g
         case .insAuto: return BIOSTheme.auto
         case .infectionScore: return BIOSTheme.skin
+        case .bodyTemp: return BIOSTheme.skin
         }
     }
 
@@ -99,7 +117,7 @@ enum MetricKind {
         switch self {
         case .rhr: return "bpm"
         case .hrv: return "ms"
-        case .skinTemp: return "°C"
+        case .skinTemp, .bodyTemp: return "°C"
         case .respRate: return "/min"
         case .recovery, .tir: return "%"
         case .sleep: return "h"
@@ -112,7 +130,7 @@ enum MetricKind {
     /// Digits of the header value.
     var digits: Int {
         switch self {
-        case .skinTemp, .respRate, .sleep, .tdd, .insAuto: return 1
+        case .skinTemp, .respRate, .sleep, .tdd, .insAuto, .bodyTemp: return 1
         case .per10g: return 2
         default: return 0
         }
@@ -158,8 +176,11 @@ enum MetricKind {
         return BIOSFormat.number(value, digits: digits)
     }
 
-    /// Big number: mean over the selected range.
+    /// Big number: mean over the selected range (temperature: the latest reading).
     func value(_ model: SeriesModel) -> String? {
+        if self == .bodyTemp {
+            return model.latest?.value.map { BIOSFormat.number($0, digits: 1) }
+        }
         let values = rangeValues(model)
         guard !values.isEmpty else { return nil }
         return format(values.reduce(0, +) / Double(values.count), model)
@@ -169,6 +190,16 @@ enum MetricKind {
     func sub(_ model: SeriesModel, days: Int) -> String? {
         let values = rangeValues(model)
         guard !values.isEmpty else { return nil }
+        if self == .bodyTemp {
+            var first = "letzte Messung"
+            if let latest = model.latest {
+                first += " " + BIOSFormat.relative(latest.date)
+            }
+            let count = values.count == 1 ? "1 Messung" : "\(values.count) Messungen"
+            let high = values.max().map { " · max \(BIOSFormat.number($0, digits: 1)) °C" } ?? ""
+            return first + "
+" + count + high
+        }
         let total = model.points.count
         var first = "Ø \(model.days ?? days) Tage"
         if total > 0, values.count < total {
@@ -264,6 +295,16 @@ enum MetricKind {
             if self == .sleep {
                 spec.ySuffix = " h"
                 spec.yMin = 0
+            }
+            if self == .bodyTemp {
+                // Single readings: dots on every point, no area, fever lines 37,5 / 38.
+                spec.area = []
+                spec.showDots = true
+                spec.yMin = 35.5
+                spec.yMax = 38.5
+                spec.refs = model.refs.isEmpty
+                    ? [ChartRef(id: 0, value: 37.5, label: "37,5"), ChartRef(id: 1, value: 38, label: "38", trailing: true)]
+                    : model.refs
             }
         }
         return spec

@@ -133,20 +133,14 @@ struct VirusTile: View {
         ) {
             if let region, !region.viruses.isEmpty {
                 ForEach(region.viruses) { virus in
-                    HStack(spacing: 5) {
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
                         Text(virus.virus)
                             .font(.footnote.weight(.semibold))
                             .lineLimit(1)
-                        TrendArrow(fine: virus.trendFine)
-                            .frame(width: 16)
                         Spacer(minLength: 2)
-                        Text(virus.level)
-                            .font(.caption2)
-                            .foregroundStyle(BIOSLevel.virusColor(virus.level))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
+                        VirusLevelTrend(virus: virus, compact: true)
                     }
-                    .frame(minHeight: 24)
+                    .frame(minHeight: 30)
                 }
             } else {
                 NoDataTileContent(reason: region?.reason ?? "Keine Abwasserdaten")
@@ -156,7 +150,7 @@ struct VirusTile: View {
 
     private var accessibilityText: String {
         guard let region, !region.viruses.isEmpty else { return "Viren im Abwasser, keine Daten" }
-        let rows = region.viruses.map { "\($0.virus) \($0.trendFine), Niveau \($0.level)" }
+        let rows = region.viruses.map { "\($0.virus), \(VirusLevelTrend.spoken($0))" }
         return "Viren \(region.region): " + rows.joined(separator: "; ") + ". \(region.sampleText)"
     }
 }

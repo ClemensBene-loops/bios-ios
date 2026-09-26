@@ -9,7 +9,7 @@ struct GlukoseDetailView: View {
     var body: some View {
         let glucose = dashboardStore.dashboard?.glucose
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            LazyVStack(alignment: .leading, spacing: 12) {
                 StoreStatusBanner()
                 GlucoseSummaryCard(glucose: glucose)
                 ChartCard(
@@ -189,7 +189,7 @@ struct RecoveryDetailView: View {
     var body: some View {
         let recovery = dashboardStore.dashboard?.recovery
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            LazyVStack(alignment: .leading, spacing: 12) {
                 StoreStatusBanner()
                 HStack(spacing: 16) {
                     ZStack {
@@ -246,7 +246,7 @@ struct InsulinDetailView: View {
     var body: some View {
         let insulin = dashboardStore.dashboard?.insulin
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            LazyVStack(alignment: .leading, spacing: 12) {
                 StoreStatusBanner()
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
@@ -302,7 +302,7 @@ struct LoopDetailView: View {
     var body: some View {
         let loop = dashboardStore.dashboard?.loop
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            LazyVStack(alignment: .leading, spacing: 12) {
                 StoreStatusBanner()
                 VStack(spacing: 0) {
                     InfoRow(

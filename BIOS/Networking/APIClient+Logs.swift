@@ -42,15 +42,45 @@ extension APIClient {
         try await requestJSON("GET", path: ["v1", "intake"], query: [URLQueryItem(name: "days", value: String(days))])
     }
 
-    /// `POST /v1/medications` -> `{"id": ...}`
-    func postMedication(takenAt: String, name: String, dose: String?, note: String?) async throws -> JSONValue? {
-        let body: JSONValue = .object([
+    /// `POST /v1/medications` -> `{"id": ...}`. With `plan_item_id` the server
+    /// counts the intake against that plan item (name/dose default to the plan).
+    func postMedication(takenAt: String, name: String, dose: String?, note: String?,
+                        planItemID: String? = nil) async throws -> JSONValue? {
+        var object: [String: JSONValue] = [
             "taken_at": .string(takenAt),
             "name": .string(name),
             "dose": dose.map { JSONValue.string($0) } ?? JSONValue.null,
             "note": note.map { JSONValue.string($0) } ?? JSONValue.null,
-        ])
-        return try await requestJSON("POST", path: ["v1", "medications"], body: body)
+        ]
+        if let planItemID {
+            object["plan_item_id"] = .string(planItemID)
+        }
+        return try await requestJSON("POST", path: ["v1", "medications"], body: .object(object))
+    }
+
+    /// `GET /v1/medication-plan` (same shape as supplements, items with `times`).
+    func fetchMedicationPlan() async throws -> JSONValue? {
+        try await requestJSON("GET", path: ["v1", "medication-plan"])
+    }
+
+    /// `PUT /v1/medication-plan` with the complete plan (the server keeps history).
+    func putMedicationPlan(_ items: [JSONValue]) async throws -> JSONValue? {
+        try await requestJSON("PUT", path: ["v1", "medication-plan"], body: .object(["items": .array(items)]))
+    }
+
+    /// `POST /v1/vitals` (temperature or blood pressure) -> `{"id", "item"}`.
+    func postVital(_ body: JSONValue) async throws -> JSONValue? {
+        try await requestJSON("POST", path: ["v1", "vitals"], body: body)
+    }
+
+    /// `DELETE /v1/vitals/{id}`
+    func deleteVital(id: String) async throws {
+        _ = try await requestJSON("DELETE", path: ["v1", "vitals", id])
+    }
+
+    /// `GET /v1/vitals?days=N`
+    func fetchVitals(days: Int) async throws -> JSONValue? {
+        try await requestJSON("GET", path: ["v1", "vitals"], query: [URLQueryItem(name: "days", value: String(days))])
     }
 
     /// `DELETE /v1/medications/{id}`

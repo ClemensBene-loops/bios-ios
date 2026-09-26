@@ -6,15 +6,17 @@ enum RangeSetting {
 }
 
 /// Tab "Körper": Whoop, glucose and insulin charts with baseline bands.
+///
+/// Scrolling: a LazyVStack builds the chart cards only near the screen; every
+/// card observes only its own series slot (SeriesStore) and the charts skip
+/// re-rendering for unchanged data. The page itself observes no store, so a
+/// dashboard refresh does not rebuild the stack.
 struct KoerperView: View {
-    @EnvironmentObject var dashboardStore: DashboardStore
-    @EnvironmentObject var seriesStore: SeriesStore
     @AppStorage(RangeSetting.key) private var days = 7
 
     var body: some View {
-        let glucose = dashboardStore.dashboard?.glucose
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            LazyVStack(alignment: .leading, spacing: 12) {
                 RangePicker(days: $days)
 
                 SectionHeader(title: "Whoop", route: .recovery)
@@ -23,13 +25,10 @@ struct KoerperView: View {
                 MetricChartCard(kind: .hrv, days: days, compact: true)
                 MetricChartCard(kind: .sleep, days: days, compact: true)
 
+                BodyTemperatureSection(days: days)
+
                 SectionHeader(title: "Glukose", route: .glukose)
-                if let glucose, !glucose.evaluable {
-                    NotEvaluableBox(
-                        title: "Glukose heute nicht bewertbar",
-                        text: (glucose.reason ?? "Zu wenige Werte") + ". Die Tageswerte bis gestern sind vollständig."
-                    )
-                }
+                GlucoseNotEvaluableNote()
                 MetricChartCard(kind: .glucoseDaily, days: days, compact: true)
                 MetricChartCard(kind: .tir, days: days, compact: true)
 
@@ -45,8 +44,39 @@ struct KoerperView: View {
         .biosPageBackground()
         .navigationTitle("Körper")
         .refreshable {
-            await dashboardStore.refresh(force: true)
-            await seriesStore.refreshLoaded()
+            await DashboardStore.shared.refresh(force: true)
+            await SeriesStore.shared.refreshLoaded()
+        }
+    }
+}
+
+/// "Glukose heute nicht bewertbar" box; observes the dashboard on its own.
+private struct GlucoseNotEvaluableNote: View {
+    @EnvironmentObject var dashboardStore: DashboardStore
+
+    var body: some View {
+        if let glucose = dashboardStore.dashboard?.glucose, !glucose.evaluable {
+            NotEvaluableBox(
+                title: "Glukose heute nicht bewertbar",
+                text: (glucose.reason ?? "Zu wenige Werte") + ". Die Tageswerte bis gestern sind vollständig."
+            )
+        }
+    }
+}
+
+/// Körpertemperatur (readings entered in the app, `body_temp`): only shown
+/// when there is at least one reading in the selected range.
+struct BodyTemperatureSection: View {
+    let days: Int
+
+    var body: some View {
+        SeriesReader(request: SeriesStore.Request(metric: MetricKind.bodyTemp.metric, days: days, source: nil)) { entry in
+            if let model = entry?.model, model.hasValues {
+                VStack(alignment: .leading, spacing: 12) {
+                    SectionHeader(title: "Temperatur")
+                    MetricChartCard(kind: .bodyTemp, days: days, compact: true)
+                }
+            }
         }
     }
 }

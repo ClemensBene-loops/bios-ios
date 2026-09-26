@@ -355,6 +355,8 @@ struct InfectionModel {
     let scoreParts: [ScorePart]
     /// "Passt zeitlich zu: COVID im Wiener Abwasser stark steigend".
     let envContext: String?
+    /// "37,8 °C gemessen heute 07:40" (temperature entered in the app, only context).
+    let temperatureContext: String?
 
     init(json: JSONValue) {
         day = json.str("day")
@@ -385,6 +387,7 @@ struct InfectionModel {
         scoreLevel = ScoreLevel(key: scoreLevelKey, score: scoreValue)
         scoreParts = ScorePart.list(json["score_parts"] ?? json.obj("score")?["parts"])
         envContext = json.str("env_context") ?? json.obj("env_context")?.str("text")
+        temperatureContext = json.str("temperature_context") ?? json.obj("temperature_context")?.str("text")
         if let headline = json.str("headline") {
             self.headline = headline
         } else {

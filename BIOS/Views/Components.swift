@@ -449,12 +449,51 @@ struct PollenDot: View {
 /// Virus trend arrow (direction carries the information).
 struct TrendArrow: View {
     let fine: String
+    var font: Font = .footnote
 
     var body: some View {
         Image(systemName: BIOSLevel.trendSymbol(fine))
-            .font(.footnote.weight(BIOSLevel.isStrong(fine) ? .heavy : .semibold))
+            .font(font.weight(BIOSLevel.isStrong(fine) ? .heavy : .semibold))
             .foregroundStyle(BIOSLevel.isStrong(fine) ? BIOSTheme.strongTrend : BIOSTheme.text2)
             .accessibilityHidden(true)
+    }
+}
+
+/// Virus level and trend, both labeled so they cannot be confused:
+/// primary "Niveau: niedrig" (level color), secondary "Trend: ↑ stark steigend".
+/// Same on the Heute tile, in Umwelt and in the detail.
+struct VirusLevelTrend: View {
+    let virus: VirusModel
+    var compact = false
+    var alignment: HorizontalAlignment = .trailing
+
+    var body: some View {
+        VStack(alignment: alignment, spacing: 1) {
+            (Text("Niveau: ").foregroundStyle(BIOSTheme.text3)
+                + Text(virus.level).fontWeight(.semibold).foregroundStyle(BIOSLevel.virusColor(virus.level)))
+                .font(compact ? .caption : .footnote)
+            HStack(spacing: 3) {
+                Text("Trend:")
+                    .foregroundStyle(BIOSTheme.text3)
+                TrendArrow(fine: virus.trendFine, font: compact ? .caption2 : .caption)
+                Text(VirusLevelTrend.trendWord(virus))
+                    .foregroundStyle(BIOSLevel.isStrong(virus.trendFine) ? BIOSTheme.strongTrend : BIOSTheme.text2)
+            }
+            .font(compact ? .caption2 : .caption)
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.75)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(VirusLevelTrend.spoken(virus))
+    }
+
+    static func trendWord(_ virus: VirusModel) -> String {
+        virus.trendFine.isEmpty ? "kein Trend" : virus.trendFine
+    }
+
+    /// "Niveau niedrig, Trend stark steigend"
+    static func spoken(_ virus: VirusModel) -> String {
+        "Niveau \(virus.level), Trend \(trendWord(virus))"
     }
 }
 

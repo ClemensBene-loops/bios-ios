@@ -32,6 +32,8 @@ struct BIOSApp: App {
                         await EventStore.shared.flush()
                         await SupplementStore.shared.flush()
                         await MedicationStore.shared.flush()
+                        await MedicationPlanStore.shared.flush()
+                        await VitalsStore.shared.flush()
                     }
                 }
             }

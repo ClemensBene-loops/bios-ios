@@ -19,7 +19,7 @@ struct HeuteView: View {
     var body: some View {
         let dashboard = dashboardStore.dashboard
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            LazyVStack(alignment: .leading, spacing: 12) {
                 Text(BIOSFormat.longDay(Date()).uppercased())
                     .font(.footnote.weight(.semibold))
                     .tracking(0.5)
@@ -66,6 +66,8 @@ struct HeuteView: View {
                 .environmentObject(eventStore)
                 .environmentObject(supplementStore)
                 .environmentObject(medicationStore)
+                .environmentObject(MedicationPlanStore.shared)
+                .environmentObject(VitalsStore.shared)
                 .environmentObject(dashboardStore)
                 .environmentObject(seriesStore)
                 .environment(\.locale, BIOSFormat.locale)

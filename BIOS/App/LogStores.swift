@@ -140,9 +140,12 @@ struct DashboardIntakeModel {
     let complete: Bool
     let streakDays: Int?
     let medicationsToday: Int?
+    /// Medication plan items of today with taken vs per_day (additive).
+    let planToday: [PlanTodayStatus]
 
     init(json: JSONValue) {
         let today = json.obj("today")
+        planToday = json.list("medication_plan_today").compactMap { PlanTodayStatus(json: $0) }
         taken = today?.int("taken")
         total = today?.int("total")
         complete = today?.flag("complete") ?? false
@@ -279,6 +282,7 @@ final class SupplementStore: ObservableObject {
                 LogQueue.save(items, Self.itemsFile)
                 pendingItems = nil
                 removeQueueFile(Self.itemsQueueFile)
+                BIOSShortcuts.updateAppShortcutParameters()
             } catch {
                 if LogQueue.keep(error) {
                     lastError = ErrorKind.isOffline(error) ? "Keine Verbindung" : error.localizedDescription
@@ -329,6 +333,8 @@ final class SupplementStore: ObservableObject {
             if let json = try await client.fetchSupplements() {
                 items = json.list("items").compactMap { SupplementItem(json: $0) }
                 LogQueue.save(items, Self.itemsFile)
+                // Siri learns the supplement names for "<Name> genommen in BIOS".
+                BIOSShortcuts.updateAppShortcutParameters()
             }
             if let json = try await client.fetchIntake(days: days) {
                 var result: [String: [String: Bool]] = [:]
@@ -399,16 +405,19 @@ struct MedicationEntry: Identifiable, Codable, Equatable {
     var name: String
     var dose: String?
     var note: String?
+    /// Medication plan item this intake counts for (nil = free entry).
+    var planItemID: String?
 
     var id: String { localID.uuidString }
 
-    init(takenAt: String, name: String, dose: String?, note: String?) {
+    init(takenAt: String, name: String, dose: String?, note: String?, planItemID: String? = nil) {
         serverID = nil
         localID = UUID()
         self.takenAt = takenAt
         self.name = name
         self.dose = dose
         self.note = note
+        self.planItemID = planItemID
     }
 
     init?(json: JSONValue) {
@@ -419,6 +428,7 @@ struct MedicationEntry: Identifiable, Codable, Equatable {
         self.name = name
         dose = json.str("dose")
         note = json.str("note")
+        planItemID = LogQueue.idString(json["plan_item_id"])
     }
 
     var date: Date? {
@@ -467,6 +477,11 @@ final class MedicationStore: ObservableObject {
         entries.filter { $0.takenAt.hasPrefix(day) }.count
     }
 
+    /// Intakes of one plan item on a day (local and server entries).
+    func count(planItemID: String, on day: String) -> Int {
+        entries.filter { $0.planItemID == planItemID && $0.takenAt.hasPrefix(day) }.count
+    }
+
     func isPending(_ entry: MedicationEntry) -> Bool {
         entry.serverID == nil
     }
@@ -474,8 +489,9 @@ final class MedicationStore: ObservableObject {
     // MARK: Changes
 
     @discardableResult
-    func add(name: String, dose: String?, note: String?, at date: Date) async -> EventStore.Outcome {
-        let entry = MedicationEntry(takenAt: Self.stamp(date), name: name, dose: dose, note: note)
+    func add(name: String, dose: String?, note: String?, at date: Date,
+             planItemID: String? = nil) async -> EventStore.Outcome {
+        let entry = MedicationEntry(takenAt: Self.stamp(date), name: name, dose: dose, note: note, planItemID: planItemID)
         entries.insert(entry, at: 0)
         sortEntries()
         pending.append(.add(localID: entry.localID))
@@ -513,7 +529,8 @@ final class MedicationStore: ObservableObject {
                     if let index = entries.firstIndex(where: { $0.localID == localID }) {
                         let entry = entries[index]
                         let answer = try await client.postMedication(
-                            takenAt: entry.takenAt, name: entry.name, dose: entry.dose, note: entry.note
+                            takenAt: entry.takenAt, name: entry.name, dose: entry.dose, note: entry.note,
+                            planItemID: entry.planItemID
                         )
                         let serverID = LogQueue.idString(answer?["id"]) ?? LogQueue.idString(answer?.obj("medication")?["id"])
                         if let current = entries.firstIndex(where: { $0.localID == localID }) {

@@ -1,8 +1,17 @@
 import Foundation
 import os
 
+/// One observable entry per request key: a chart card observes only its own
+/// slot, so loading one series does not re-render every chart on the page
+/// (that made long pages like Körper stutter while scrolling).
+@MainActor
+final class SeriesSlot: ObservableObject {
+    @Published var entry: SeriesStore.Entry?
+}
+
 /// Loads `/v1/series` per (metric, days, source) with an in-memory table and
-/// the disk cache, so charts show the last state offline.
+/// the disk cache, so charts show the last state offline. The store itself
+/// publishes nothing; views read through `slot(_:)` (see SeriesReader).
 @MainActor
 final class SeriesStore: ObservableObject {
     static let shared = SeriesStore()
@@ -24,7 +33,7 @@ final class SeriesStore: ObservableObject {
         var error: String?
     }
 
-    @Published private(set) var entries: [String: Entry] = [:]
+    private var slots: [String: SeriesSlot] = [:]
 
     private var requests: [String: Request] = [:]
     private static let log = Logger(subsystem: "at.bene.bios", category: "series")
@@ -34,21 +43,37 @@ final class SeriesStore: ObservableObject {
     init() {}
 
     func entry(_ request: Request) -> Entry? {
-        entries[request.key]
+        slots[request.key]?.entry
+    }
+
+    /// The observable slot of a request (created on first use).
+    func slot(_ request: Request) -> SeriesSlot {
+        if let slot = slots[request.key] { return slot }
+        let slot = SeriesSlot()
+        slots[request.key] = slot
+        return slot
+    }
+
+    private func store(_ entry: Entry, _ request: Request) {
+        slot(request).entry = entry
     }
 
     func load(_ request: Request, force: Bool = false) async {
         let key = request.key
         requests[key] = request
-        var entry = entries[key] ?? Entry()
+        var entry = self.entry(request) ?? Entry()
         if entry.isLoading { return }
+        var fromDisk = false
         if entry.model == nil, let cached = DiskCache.load(key) {
             entry.model = SeriesModel(json: cached.value)
             entry.fetchedAt = cached.fetchedAt
+            fromDisk = true
         }
         if !force, entry.model != nil, entry.error == nil, let fetched = entry.fetchedAt,
            Date().timeIntervalSince(fetched) < maxAge {
-            entries[key] = entry
+            // Fresh already: publish only what changed (a card re-appearing in a
+            // lazy stack must not re-render for nothing).
+            if fromDisk { store(entry, request) }
             return
         }
         guard let client = APIClient.fromConfig() else {
@@ -56,16 +81,16 @@ final class SeriesStore: ObservableObject {
             if entry.model == nil, let json = SampleData.series(metric: request.metric, days: request.days) {
                 entry.model = SeriesModel(json: json)
                 entry.fetchedAt = Date()
-                entries[key] = entry
+                store(entry, request)
                 return
             }
             #endif
             entry.error = APIError.notConfigured.errorDescription
-            entries[key] = entry
+            store(entry, request)
             return
         }
         entry.isLoading = true
-        entries[key] = entry
+        store(entry, request)
         do {
             let json = try await client.fetchSeries(metric: request.metric, days: request.days, source: request.source)
             let now = Date()
@@ -80,7 +105,14 @@ final class SeriesStore: ObservableObject {
             }
         }
         entry.isLoading = false
-        entries[key] = entry
+        store(entry, request)
+    }
+
+    /// Reloads the shown series of some metrics (after an entry in the app).
+    func reload(metrics: Set<String>) async {
+        for request in requests.values where metrics.contains(request.metric) {
+            await load(request, force: true)
+        }
     }
 
     /// Pull-to-refresh: reloads every series that was shown in this session.

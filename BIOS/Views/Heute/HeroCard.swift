@@ -97,6 +97,16 @@ struct HeroCard: View {
                 .padding(.top, 12)
             }
 
+            if let temperature = infection?.temperatureContext {
+                ContextLine(
+                    symbol: "thermometer",
+                    title: temperature,
+                    detail: "Eigene Messung, Kontext zum Muster",
+                    style: .neutral
+                )
+                .padding(.top, 12)
+            }
+
             if let reason = glucoseNotEvaluableReason {
                 ContextLine(
                     symbol: "circle.dashed",
@@ -165,6 +175,7 @@ struct HeroCard: View {
         if let env = infection.envContext { parts.append(env) }
         if infection.resistUp { parts.append(infection.contextText ?? "Dazu Glukose/Insulinbedarf erhöht") }
         if let note = infection.confounderNote { parts.append(note) }
+        if let temperature = infection.temperatureContext { parts.append(temperature) }
         if let reason = glucoseNotEvaluableReason { parts.append("Glukose nicht bewertbar: \(reason)") }
         return parts.joined(separator: ". ")
     }

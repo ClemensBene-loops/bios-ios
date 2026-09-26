@@ -9,7 +9,7 @@ struct InfektDetailView: View {
     var body: some View {
         let infection = dashboardStore.dashboard?.infection
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            LazyVStack(alignment: .leading, spacing: 12) {
                 StoreStatusBanner()
                 InfektSummaryCard(infection: infection)
                 RangePicker(days: $days)
@@ -83,6 +83,10 @@ struct InfektSummaryCard: View {
 
             if let env = infection?.envContext {
                 ContextLine(symbol: "microbe", title: env, detail: nil, style: .neutral)
+            }
+
+            if let temperature = infection?.temperatureContext {
+                ContextLine(symbol: "thermometer", title: temperature, detail: "Eigene Messung, Kontext zum Muster", style: .neutral)
             }
 
             if let chips = infection?.chips, !chips.isEmpty {

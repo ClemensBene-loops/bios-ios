@@ -13,7 +13,7 @@ struct UmweltView: View {
         let allergy = dashboard?.environment?.allergy ?? dashboard?.pollen?.allergy
         let hints = dashboard?.environment?.hints ?? []
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            LazyVStack(alignment: .leading, spacing: 12) {
                 StoreStatusBanner()
 
                 SectionHeader(title: "Viren im Abwasser", route: .viren)
@@ -127,20 +127,12 @@ struct VirusRegionCard: View {
             }
             ForEach(region.viruses) { virus in
                 VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(virus.virus)
                             .font(.subheadline.weight(.semibold))
                             .frame(minWidth: 62, alignment: .leading)
-                        HStack(spacing: 6) {
-                            TrendArrow(fine: virus.trendFine)
-                            Text(virus.trendFine.isEmpty ? "kein Trend" : virus.trendFine)
-                                .foregroundStyle(BIOSLevel.isStrong(virus.trendFine) ? BIOSTheme.strongTrend : BIOSTheme.text2)
-                        }
-                        .font(.footnote)
                         Spacer(minLength: 4)
-                        Text(virus.level)
-                            .font(.footnote)
-                            .foregroundStyle(BIOSLevel.virusColor(virus.level))
+                        VirusLevelTrend(virus: virus)
                     }
                     if detailed, let detail = detailText(virus) {
                         Text(detail)

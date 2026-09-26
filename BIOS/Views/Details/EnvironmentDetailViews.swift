@@ -18,7 +18,7 @@ struct VirenDetailView: View {
             ?? regions.flatMap(\.viruses).first { $0.virus == selected }?.metric
             ?? VirenDetailView.fallbackMetric(selected)
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            LazyVStack(alignment: .leading, spacing: 12) {
                 StoreStatusBanner()
                 Picker("Virus", selection: $virus) {
                     ForEach(names, id: \.self) { name in
@@ -90,8 +90,8 @@ struct VirenDetailView: View {
     static func subText(_ virus: VirusModel?, wien: SeriesModel?, weeks: Int) -> String? {
         var lines: [String] = []
         if let virus {
-            lines.append(virus.trendFine)
-            lines.append("Niveau \(virus.level)")
+            lines.append("Niveau: \(virus.level)")
+            lines.append("Trend: \(VirusLevelTrend.trendWord(virus))")
         }
         let values = (wien?.points ?? []).compactMap { $0.value }
         if !values.isEmpty {
@@ -120,6 +120,9 @@ struct VirenDetailView: View {
         spec.ySuffix = " %"
         spec.valueUnit = "%"
         spec.seriesLabels = ["wien": "Wien", "de": "Deutschland"]
+        // Both regions always in the bubble; different sample days show the
+        // nearest earlier sample with its date.
+        spec.seriesOrder = ["wien", "de"]
         spec.refs = [
             ChartRef(id: 0, value: 15, label: "mittel"),
             ChartRef(id: 1, value: 40, label: "hoch"),
@@ -156,7 +159,7 @@ struct PollenDetailView: View {
         let places = UmweltData.pollenPlaces(dashboard)
         let home = places.first
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            LazyVStack(alignment: .leading, spacing: 12) {
                 StoreStatusBanner()
                 if places.isEmpty {
                     NotEvaluableBox(title: "Keine Pollenvorhersage", text: nil)

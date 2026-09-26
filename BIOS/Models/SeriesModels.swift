@@ -81,6 +81,8 @@ struct SeriesModel {
     /// Context days (glu_up / ins_up, rule A: never an alarm), glucose/insulin only.
     let contextFlagDates: [Date]
     let generatedAt: Date?
+    /// Fixed reference lines from the server (`refs: [{v, label}]`).
+    let refs: [ChartRef]
 
     init(json: JSONValue) {
         metric = json.str("metric") ?? ""
@@ -106,6 +108,12 @@ struct SeriesModel {
         flagDates = json.strings("flags").compactMap { BIOSDate.parse($0) }
         contextFlagDates = json.strings("context_flags").compactMap { BIOSDate.parse($0) }
         generatedAt = BIOSDate.parse(json.str("generated_at"))
+        var refs: [ChartRef] = []
+        for (index, element) in json.list("refs").enumerated() {
+            guard let value = element.double("v") else { continue }
+            refs.append(ChartRef(id: index, value: value, label: element.str("label") ?? "", trailing: index % 2 == 1))
+        }
+        self.refs = refs
     }
 
     /// Last point with a value.

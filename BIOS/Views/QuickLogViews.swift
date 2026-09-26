@@ -6,6 +6,8 @@ enum QuickLogTarget: String, Identifiable {
     case alcohol
     case supplements
     case medications
+    case temperature
+    case bloodPressure
 
     var id: String { rawValue }
 }
@@ -23,6 +25,8 @@ struct QuickLogSheet: View {
                 case .alcohol: AlcoholQuickView()
                 case .supplements: SupplementTodayView()
                 case .medications: MedicationLogView()
+                case .temperature: TemperatureLogView()
+                case .bloodPressure: BloodPressureLogView()
                 }
             }
             .toolbar {
@@ -42,10 +46,13 @@ struct QuickLogMenu: View {
     @EnvironmentObject var events: EventStore
     @EnvironmentObject var supplements: SupplementStore
     @EnvironmentObject var medications: MedicationStore
+    @EnvironmentObject var plan: MedicationPlanStore
+    @EnvironmentObject var vitals: VitalsStore
 
     var body: some View {
         let today = EventStore.dayString(Date())
         let count = supplements.takenCount(on: today)
+        let planProgress = plan.progress(on: today)
         List {
             NavigationLink {
                 AlcoholQuickView()
@@ -74,7 +81,33 @@ struct QuickLogMenu: View {
                     symbol: "cross.case",
                     color: BIOSTheme.insulin,
                     title: "Medikamente",
-                    subtitle: medications.count(on: today) == 0 ? "heute kein Eintrag" : "heute \(medications.count(on: today)) Einträge"
+                    subtitle: planProgress.total > 0
+                        ? "Plan heute \(planProgress.taken) von \(planProgress.total)"
+                        : (medications.count(on: today) == 0 ? "heute kein Eintrag" : "heute \(medications.count(on: today)) Einträge")
+                )
+            }
+            NavigationLink {
+                TemperatureLogView()
+            } label: {
+                QuickLogMenuRow(
+                    symbol: "thermometer",
+                    color: BIOSTheme.skin,
+                    title: "Temperatur",
+                    subtitle: vitals.latest(VitalReading.temperature).map { reading in
+                        "zuletzt \(reading.valueText), \(reading.date.map { BIOSFormat.relative($0) } ?? reading.measuredAt)"
+                    } ?? "noch kein Eintrag"
+                )
+            }
+            NavigationLink {
+                BloodPressureLogView()
+            } label: {
+                QuickLogMenuRow(
+                    symbol: "heart.text.square",
+                    color: BIOSTheme.rhr,
+                    title: "Blutdruck",
+                    subtitle: vitals.latest(VitalReading.bloodPressure).map { reading in
+                        "zuletzt \(reading.valueText), \(reading.date.map { BIOSFormat.relative($0) } ?? reading.measuredAt)"
+                    } ?? "Sys, Dia, Puls"
                 )
             }
         }
@@ -546,6 +579,7 @@ struct SupplementItemForm: View {
 
 struct MedicationLogView: View {
     @EnvironmentObject var store: MedicationStore
+    @EnvironmentObject var plan: MedicationPlanStore
     @State private var name = ""
     @State private var dose = ""
     @State private var note = ""
@@ -554,7 +588,30 @@ struct MedicationLogView: View {
 
     var body: some View {
         let recent = Array(store.entries.prefix(50))
+        let today = EventStore.dayString(Date())
+        let planItems = plan.activeItems(on: today)
         List {
+            Section {
+                if planItems.isEmpty {
+                    Text(plan.allItems.isEmpty ? "Noch kein Plan. Unter Plan bearbeiten anlegen." : "Heute nichts geplant.")
+                        .foregroundStyle(BIOSTheme.text2)
+                }
+                ForEach(planItems) { item in
+                    PlanItemRow(item: item, day: today) { outcome in
+                        message = SupplementTodayView.message(outcome, done: true)
+                    }
+                }
+                NavigationLink {
+                    MedicationPlanEditView()
+                } label: {
+                    Label("Plan bearbeiten", systemImage: "pencil")
+                }
+            } header: {
+                Text("Plan heute")
+            } footer: {
+                Text("Tippen trägt eine Einnahme jetzt ein. Siri: \"<Name> in BIOS\".")
+            }
+
             Section {
                 TextField("Name", text: $name)
                     .textInputAutocapitalization(.words)
@@ -598,7 +655,7 @@ struct MedicationLogView: View {
                 }
                 .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
             } header: {
-                Text("Neu")
+                Text("Freier Eintrag")
             } footer: {
                 if let message {
                     Text(message)
@@ -654,6 +711,8 @@ struct MedicationLogView: View {
         .task {
             await store.flush()
             await store.refresh()
+            await plan.flush()
+            await plan.refresh()
         }
     }
 }
@@ -666,6 +725,7 @@ struct QuickStatusCard: View {
     @EnvironmentObject var events: EventStore
     @EnvironmentObject var supplements: SupplementStore
     @EnvironmentObject var medications: MedicationStore
+    @EnvironmentObject var plan: MedicationPlanStore
     let open: (QuickLogTarget) -> Void
 
     var body: some View {
@@ -763,6 +823,10 @@ struct QuickStatusCard: View {
     }
 
     private func medicationText(_ today: String) -> String {
+        let progress = plan.progress(on: today)
+        if progress.total > 0 {
+            return "heute \(progress.taken)/\(progress.total)"
+        }
         let local = medications.count(on: today)
         let count = Swift.max(local, supplements.dashboardIntake?.medicationsToday ?? 0)
         return count == 0 ? "heute keine" : "heute \(count)"
