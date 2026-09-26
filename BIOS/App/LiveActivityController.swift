@@ -153,7 +153,13 @@ final class LiveActivityController: ObservableObject {
         }
         Task { @MainActor in
             for await enabled in ActivityAuthorizationInfo().activityEnablementUpdates {
+                let changed = enabled != self.systemEnabled
                 self.systemEnabled = enabled
+                // Switched off in iOS settings: the server must not try to
+                // start an activity (delete the start token); on again: re-send.
+                if changed {
+                    await self.syncStartToken()
+                }
             }
         }
         if #available(iOS 17.2, *) {
@@ -305,10 +311,11 @@ final class LiveActivityController: ObservableObject {
         await delete(token)
     }
 
-    /// Push-to-start token: registered while the toggle is on, removed when off.
+    /// Push-to-start token: registered while the toggle is on and iOS allows
+    /// Live Activities, removed otherwise.
     private func syncStartToken() async {
         guard let token = pushToStartToken else { return }
-        if isEnabled {
+        if isEnabled && systemEnabled {
             done.remove("DELETE|\(token)")
             await post(kind: "start", token: token, activityID: nil)
         } else {

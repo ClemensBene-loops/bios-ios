@@ -72,8 +72,13 @@ The "+" button in the Heute toolbar opens a sheet with three entries:
 - **Supplements**: tick single items or all at once for today, history calendar,
   edit the regimen (`GET/PUT /v1/supplements`, `POST/GET /v1/intake`). The regimen is
   stored only on the server; changes apply from today and the server keeps the history.
-- **Medikamente**: log a single medication with time and optional dose
-  (`POST/GET/DELETE /v1/medications`). Log only, never dosing advice.
+- **Medikamente**: plan rows as counters for Heute or Gestern ("+" logs one intake
+  with `plan_item_id`, now for today, the next open plan time for yesterday, or an
+  own time; "−" removes the latest intake of that item on that day with
+  `DELETE /v1/medications/{id}`; a warning above `per_day`), plus free entries with
+  time and optional dose (`POST/GET/DELETE /v1/medications`). The list below shows
+  the selected day. After every add or delete the app reloads the list and the
+  dashboard, so counter, list and Routine card agree. Log only, never dosing advice.
 
 All three queue writes on disk when offline and send them later; the dashboard's
 `events` and `intake` blocks reconcile the local state on every refresh.
@@ -110,17 +115,80 @@ per mode (`normal`: next intake; `infection`: "Infekt · Tag n" + Infekt-Score;
 `temperature`: value, time, "Erhöht"), bottom the supplements. Dynamic Island:
 minimal = "b" mark with a status dot (the usual state next to Loop), compact =
 mark + score, expanded with "Genommen" / "Später" (`LiveActivityIntent`, runs in
-the app, logs the intake through the offline queue). The app registers the
-push-to-start token (iOS 17.2+, `kind: start`) and every activity's update token
-(`kind: update` + `activity_id`) with `POST /v1/live-activity/token` (toggle off or
-an ended activity: `DELETE /v1/live-activity/token/{token}`). The server starts the
-activity at 06:30, updates it hourly and ends it at 23:30 via APNs
-(`apns-push-type: liveactivity`, topic `at.bene.bios.push-type.liveactivity`,
-`attributes-type: BIOSActivityAttributes`, `attributes: {}`, content-state keys as
-in `Shared/BIOSActivityAttributes.swift`). Fallback: when the app opens during the
-day and nothing runs, it starts a local activity with `GET /v1/live-activity`
-(offline from the cached dashboard) and ends it at night (23:30 to 6:00).
-Toggle "Live Activity" in Mehr.
+the app, logs the intake through the offline queue).
+
+**Health ring.** One geometry for every ring (Heute hero 138/11, score detail
+130/10, lock screen 56/4.5, island 44/3.5), in `Shared/HealthRing.swift`: six equal
+arcs in the server pillar order (Schlaf, Erholung, Stoffwechsel, Kreislauf, Abwehr,
+Routine), start at 12 o'clock, clockwise, a fixed 3 pt gap (`g = 3 pt / r`) and the
+round-cap overhang `c = (lineWidth / 2) / r` taken off both ends
+(`a0 = i·span + g/2 + c`, `a1 = (i+1)·span − g/2 − c`, butt cap if `a1 <= a0`), so
+no two arcs touch. Value 0 = dim track only, missing pillar = grey dashed track.
+
+**Flow over a day.**
+
+| When | Who | What |
+| --- | --- | --- |
+| App opens, nothing running | app | local start with `GET /v1/live-activity` (offline: cached dashboard + plan stores) |
+| 06:30 | server cron `--start` | push-to-start (iOS 17.2+) to the `start` token |
+| every hour at :22 | server cron | `update` push to every registered `update` token |
+| 23:30 | server cron `--end` | `end` push, banner disappears |
+| 23:30 to 06:30 | server | no updates (the banner keeps its last state) |
+
+- **Nachtpause** (Mehr > Live Activity, default off): on = the app ends the banner
+  from 23:30 to 06:30 and starts none; off = the app ends nothing at night and may
+  start one locally at any time. The server side is the same either way.
+- **8-hour limit:** iOS ends a Live Activity after at most 8 hours (then up to
+  4 hours on the lock screen as ended). A push-started activity from 06:30 ends
+  around 14:30; updates to its token go nowhere afterwards. Opening the app in the
+  afternoon starts a new local one (and registers its new `update` token).
+- **"Später"** is local only: the app moves the intake by 30 min in its own banner
+  (UserDefaults, keyed by name); the server does not know it, so the next hourly
+  push shows the plan time again until the snooze is re-applied when the app
+  updates the banner.
+- **Tokens:** `kind: start` = push-to-start token (one per device, sent while the
+  toggle is on and iOS allows Live Activities, deleted when either is switched
+  off); `kind: update` + `activity_id` = one per running activity (deleted when it
+  ends). Both via `POST /v1/live-activity/token`, removal via
+  `DELETE /v1/live-activity/token/{token}`.
+
+**APNs contract.** `apns-push-type: liveactivity`, topic
+`at.bene.bios.push-type.liveactivity`, push-to-start with
+`attributes-type: BIOSActivityAttributes` and `attributes: {}`. Content-state keys
+(`Shared/BIOSActivityAttributes.swift`, all optional and decoded leniently, no
+`Date` fields because ActivityKit would read them as seconds since 2001):
+
+| Key | Swift type | Meaning |
+| --- | --- | --- |
+| `health_score` | `Int?` | Gesundheits-Score 0 to 100 |
+| `health_level` | `String?` | level word (fallback from the score: 80 / 65 / 50) |
+| `pillars_mini` | `[Double?]?` | six pillar scores in ring order, null = no data |
+| `mode` | `String` | `normal`, `infection`, `temperature` (unknown = normal) |
+| `infection_score`, `infection_day` | `Int?` | Infekt-Score, day of the episode |
+| `infection_kind` | `String?` | `infekt` or `infekt_frueh` |
+| `temperature` | `Double?` | °C (>= 37.5 within 12 h) |
+| `temperature_at` | `String?` | ISO time of the measurement |
+| `temperature_high` | `Bool?` | at least 37.5 °C |
+| `next_medication` | object? | `name`, `time` ("HH:MM"), `overdue`, `id` (plan item id) |
+| `supplements` | object? | `taken`, `total` |
+| `updated_at` | `String?` | ISO time of the data |
+
+No decoding test target in this repo (a test target would touch the scheme that
+workflow 4 archives); the BIOS repo checks the server's content state against these
+keys in its contract test.
+
+**Troubleshooting.**
+- Banner never appears: Mehr > Live Activity shows the iOS permission ("In
+  Einstellungen erlauben" opens the app settings), whether one is running and the
+  token upload. Live Activities must be allowed for BIOS in iOS settings.
+- No 06:30 start: push-to-start needs iOS 17.2+, the `start` token on the server
+  (upload status in Mehr) and the app opened at least once since install/update.
+  The server log shows the APNs answer per token (8 characters).
+- Banner stuck on an old state in the afternoon: the 8-hour limit ended the
+  push-started activity; open the app to start a local one.
+- Banner gone at night: the server ended it at 23:30 (normal), or Nachtpause is on.
+- Server side without sending anything: `python -m reports.live_activity --preview
+  [--event start|end]` in the BIOS repo prints the payloads and their size.
 
 ## Repository layout
 
@@ -141,7 +209,8 @@ Toggle "Live Activity" in Mehr.
 - `BIOS/Config/AppConfig.swift`: reads the build-time config from Info.plist.
 - `BIOSWidgets/`: widget extension (Live Activity views, `Info.plist`).
 - `Shared/`: compiled into the app and the extension: `BIOSActivityAttributes`
-  (content state, brand colors), Live Activity intents, `BrandAssets.xcassets`
+  (content state, brand colors), `HealthRing` (pillar order and colors, ring
+  geometry, ring view), Live Activity intents, `BrandAssets.xcassets`
   (mark `BIOSMark`).
 - `BIOS/Assets.xcassets`: "Seed" app icon and `LaunchBackground` color (splash mark `BIOSMark` in `Shared/BrandAssets.xcassets`) (prepared from `docs/brand/bios-seed.png` by `tools/make_icon.py`, preview in `docs/icon-preview.png`; wordmark SVGs in `docs/brand`, drawn in code in `BIOS/Views/Brand.swift`).
 - `Config/`: `Info.plist`, `BIOS.entitlements` (`aps-environment`), xcconfigs
