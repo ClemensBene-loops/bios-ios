@@ -246,6 +246,9 @@ enum MetricKind {
         spec.height = compact ? 124 : 150
         spec.valueUnit = unit
         spec.valueDigits = digits
+        if spec.unit == .day {
+            spec.setDayRange(days: model.days ?? days, throughYesterday: isWholeDays)
+        }
         let color = self.color
         switch self {
         case .recovery:

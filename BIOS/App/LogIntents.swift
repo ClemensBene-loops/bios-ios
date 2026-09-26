@@ -157,35 +157,69 @@ struct MedicationQuery: EntityStringQuery {
     }
 }
 
-/// Logs one intake of a plan item now.
+/// Logs one intake of a plan item. Siri asks "Wie viel?" (answer "normal" keeps
+/// the plan dose) and "Wann?" ("jetzt", "um 8 Uhr", "vor einer Stunde").
 struct LogMedicationIntent: AppIntent {
     static let title: LocalizedStringResource = "Medikament genommen"
 
     @Parameter(title: "Medikament")
     var medication: MedicationEntity
 
+    @Parameter(title: "Menge", description: "Leer oder \"normal\" = Dosis aus dem Plan",
+               requestValueDialog: IntentDialog("Wie viel? Sag „normal“ für die Dosis aus dem Plan."))
+    var amount: String?
+
+    @Parameter(title: "Zeit", description: "Leer = jetzt",
+               requestValueDialog: IntentDialog("Wann? Zum Beispiel jetzt, um 8 Uhr oder vor einer Stunde."))
+    var time: Date?
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("\(\.$medication) \(\.$amount) um \(\.$time) eintragen")
+    }
+
     init() {}
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        let text = await LogIntentRunner.medication(id: medication.id, name: medication.name)
+        var answer = amount
+        if answer == nil {
+            answer = try? await $amount.requestValue(
+                IntentDialog("Wie viel? Sag „normal“ für die Dosis aus dem Plan.")
+            )
+        }
+        var when = time
+        if when == nil {
+            when = try? await $time.requestValue(
+                IntentDialog("Wann? Zum Beispiel jetzt, um 8 Uhr oder vor einer Stunde.")
+            )
+        }
+        let text = await LogIntentRunner.medication(
+            id: medication.id,
+            name: medication.name,
+            amount: SpokenInput.isDefaultAnswer(answer) ? nil : answer,
+            at: LogIntentRunner.pastTime(when ?? Date())
+        )
         return .result(dialog: "\(text)")
     }
 }
 
 // MARK: - Temperature
 
-/// Body temperature now; Siri asks for the value ("36,9").
+/// Body temperature now. The value is text: Siri does not turn a German
+/// decimal comma ("36,6") into a Double and would ask again and again.
 struct LogTemperatureIntent: AppIntent {
     static let title: LocalizedStringResource = "Temperatur eintragen"
 
-    @Parameter(title: "Temperatur in °C", requestValueDialog: IntentDialog("Wie viel Grad?"))
-    var celsius: Double
+    @Parameter(title: "Temperatur in °C", description: "z. B. 36,6",
+               requestValueDialog: IntentDialog("Wie viel Grad? Zum Beispiel 36,6."))
+    var value: String
 
     init() {}
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        guard celsius >= 34, celsius <= 43 else {
-            throw $celsius.needsValueError(IntentDialog("Bitte einen Wert zwischen 34 und 43 Grad nennen."))
+        guard let celsius = SpokenInput.temperature(value) else {
+            throw $value.needsValueError(
+                IntentDialog("Das habe ich nicht als Temperatur verstanden. Bitte einen Wert zwischen 34 und 43 Grad, zum Beispiel 36,6.")
+            )
         }
         let text = await LogIntentRunner.temperature(celsius)
         return .result(dialog: "\(text)")
@@ -251,22 +285,39 @@ enum LogIntentRunner {
         }
     }
 
+    /// A spoken time in the future ("um 20 Uhr" said in the morning) means the
+    /// day before; the server rejects intakes more than 5 min ahead.
+    static func pastTime(_ date: Date, now: Date = Date()) -> Date {
+        if date > now.addingTimeInterval(5 * 60) {
+            return Calendar.current.date(byAdding: .day, value: -1, to: date) ?? now
+        }
+        return date
+    }
+
     @MainActor
-    static func medication(id: String, name: String) async -> String {
+    static func medication(id: String, name: String, amount: String? = nil, at date: Date = Date()) async -> String {
         let store = MedicationPlanStore.shared
-        let day = EventStore.dayString(Date())
+        let day = EventStore.dayString(date)
         var item = store.allItems.first(where: { $0.serverID == id }) ?? MedicationPlanItem(name: name)
         item.serverID = id
-        let outcome = await store.log(item)
-        let time = BIOSFormat.time(Date())
+        let dose = MedicationPlanItem.dose(amount, for: item)
+        let outcome = await store.log(item, at: date, dose: dose)
+        let calendar = Calendar.current
+        var when = "um \(BIOSFormat.time(date))"
+        if calendar.isDateInYesterday(date) {
+            when = "gestern " + when
+        } else if !calendar.isDateInToday(date) {
+            when = "am \(BIOSFormat.shortDate(date)) " + when
+        }
+        let what = [name, dose].compactMap { $0 }.joined(separator: " ")
         switch outcome {
         case .synced, .queued:
             let taken = store.taken(item, on: day)
-            let progress = "heute \(taken) von \(item.target)"
+            let progress = calendar.isDateInToday(date) ? ", heute \(taken) von \(item.target)" : ""
             if case .queued = outcome {
-                return "\(name) um \(time) gespeichert (\(progress)), wird nachgereicht, sobald BIOS online ist."
+                return "\(what) \(when) gespeichert\(progress). Wird nachgereicht, sobald BIOS online ist."
             }
-            return "\(name) um \(time) eingetragen, \(progress)."
+            return "\(what) \(when) eingetragen\(progress)."
         case .failed(let message):
             return "Nicht gespeichert: \(message)."
         }

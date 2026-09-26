@@ -120,6 +120,10 @@ struct ChartSpec {
     var bubbleOnly: [ChartLinePoint] = []
     /// Order of the series in the bubble (names without segment suffix); others follow.
     var seriesOrder: [String] = []
+    /// Fixed x range (e.g. the 30/90/365 days of a picker). Without it the axis
+    /// spans the data only, so a picker would not change a sparse chart.
+    var xStart: Date?
+    var xEnd: Date?
     /// Series shown in the bubble only with a point exactly at the selected x
     /// (e.g. clinic values); all others fall back to their nearest earlier point.
     var exactOnlySeries: Set<String> = []
@@ -129,6 +133,16 @@ struct ChartSpec {
     }
 
     // MARK: Builders
+
+    /// Fixed x range of the last `days` local days, ending today (or yesterday
+    /// for whole-day series), so a 7/28/90 picker always changes the axis.
+    mutating func setDayRange(days: Int, throughYesterday: Bool = false, now: Date = Date()) {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: now)
+        let endDay = throughYesterday ? (calendar.date(byAdding: .day, value: -1, to: today) ?? today) : today
+        xEnd = calendar.date(byAdding: .day, value: 1, to: endDay)
+        xStart = calendar.date(byAdding: .day, value: -(Swift.max(1, days) - 1), to: endDay)
+    }
 
     /// Splits a series at gaps into line segments ("<name>-<segment>").
     static func linePoints(_ points: [SeriesPoint], series: String, color: Color, dashed: Bool = false,
@@ -222,11 +236,15 @@ struct PreparedChart: Equatable {
         let dates = Array(Set(allDates)).sorted()
         self.dates = dates
         let calendar = Calendar.current
-        distinctDays = Set(dates.map { calendar.startOfDay(for: $0) }).count
-        let yDomain = PreparedChart.makeYDomain(spec)
-        self.yDomain = yDomain
         let xDomain = PreparedChart.makeXDomain(spec, dates: dates)
         self.xDomain = xDomain
+        if spec.xStart != nil, spec.xEnd != nil {
+            distinctDays = Swift.max(1, Int((xDomain.upperBound.timeIntervalSince(xDomain.lowerBound) / 86_400).rounded()))
+        } else {
+            distinctDays = Set(dates.map { calendar.startOfDay(for: $0) }).count
+        }
+        let yDomain = PreparedChart.makeYDomain(spec)
+        self.yDomain = yDomain
 
         var flags: [ChartFlag] = []
         for date in spec.flags where xDomain.contains(date) {
@@ -241,7 +259,9 @@ struct PreparedChart: Equatable {
         refs = spec.refs.filter { yDomain.contains($0.value) }
         markers = spec.marker.map { [$0] } ?? []
         dots = PreparedChart.makeDotPoints(spec)
-        xTicks = PreparedChart.makeXTicks(spec.unit, dates: dates)
+        xTicks = spec.xStart != nil && spec.xEnd != nil
+            ? PreparedChart.makeRangeTicks(spec.unit, domain: xDomain)
+            : PreparedChart.makeXTicks(spec.unit, dates: dates)
         yTicks = PreparedChart.makeYTicks(yDomain)
         tracks = PreparedChart.makeTracks(spec)
     }
@@ -345,6 +365,7 @@ struct PreparedChart: Equatable {
         case .week:
             return BIOSFormat.monthShort(date)
         case .day:
+            if distinctDays > 120 { return BIOSFormat.monthShort(date) }
             return distinctDays <= 8 ? BIOSFormat.weekdayShort(date) : BIOSFormat.shortDate(date)
         }
     }
@@ -419,6 +440,8 @@ struct PreparedChart: Equatable {
         hasher.combine(spec.valueUnit)
         hasher.combine(spec.valueDigits)
         hasher.combine(spec.seriesOrder)
+        hasher.combine(spec.xStart)
+        hasher.combine(spec.xEnd)
         hasher.combine(String(describing: spec.unit))
         return hasher.finalize()
     }
@@ -455,6 +478,12 @@ struct PreparedChart: Equatable {
 
     private static func makeXDomain(_ spec: ChartSpec, dates: [Date]) -> ClosedRange<Date> {
         let calendar = Calendar.current
+        if let start = spec.xStart, let end = spec.xEnd, end > start {
+            // Keep data outside the fixed range visible instead of clipping it.
+            let low = Swift.min(start, dates.first ?? start)
+            let high = Swift.max(end, dates.last ?? end)
+            return low...high
+        }
         guard let first = dates.first, let last = dates.last else {
             let now = Date()
             return now.addingTimeInterval(-86_400)...now
@@ -525,6 +554,54 @@ struct PreparedChart: Equatable {
                         ticks.append(date)
                     }
                 }
+            }
+            return ticks
+        }
+    }
+
+    /// Ticks for a fixed range: days (all up to 8, else about 5 counted back from
+    /// the end), months for week/long ranges, every 6 h for hours.
+    private static func makeRangeTicks(_ unit: ChartXUnit, domain: ClosedRange<Date>) -> [Date] {
+        let calendar = Calendar.current
+        let span = domain.upperBound.timeIntervalSince(domain.lowerBound)
+        switch unit {
+        case .hour:
+            var ticks: [Date] = []
+            var date = calendar.dateInterval(of: .hour, for: domain.lowerBound)?.end ?? domain.lowerBound
+            while date <= domain.upperBound {
+                if calendar.component(.hour, from: date) % 6 == 0 { ticks.append(date) }
+                date = date.addingTimeInterval(3_600)
+            }
+            return ticks
+        case .day where span <= 120 * 86_400:
+            var days: [Date] = []
+            var day = calendar.startOfDay(for: domain.lowerBound)
+            while day < domain.upperBound {
+                if day >= domain.lowerBound { days.append(day) }
+                guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+                day = next
+            }
+            if days.count <= 8 { return days }
+            let step = days.count <= 31 ? 7 : Int((Double(days.count) / 5).rounded(.up))
+            var ticks: [Date] = []
+            var index = days.count - 1
+            while index >= 0 {
+                ticks.append(days[index])
+                index -= step
+            }
+            return ticks.reversed()
+        default:
+            // First day of each month (every second month beyond ~8 months).
+            var ticks: [Date] = []
+            let components = calendar.dateComponents([.year, .month], from: domain.lowerBound)
+            guard var month = calendar.date(from: components) else { return [] }
+            let every = span > 250 * 86_400 ? 2 : 1
+            var index = 0
+            while month <= domain.upperBound {
+                if month >= domain.lowerBound, index % every == 0 { ticks.append(month) }
+                index += 1
+                guard let next = calendar.date(byAdding: .month, value: 1, to: month) else { break }
+                month = next
             }
             return ticks
         }

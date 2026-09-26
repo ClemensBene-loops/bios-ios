@@ -88,6 +88,24 @@ struct MedicationPlanItem: Identifiable, Codable, Equatable {
         return .object(object)
     }
 
+    /// "2 Hub": plan dose with unit, nil without a dose.
+    var planDose: String? {
+        dose.map { [$0, unit].compactMap { $0 }.joined(separator: " ") }
+    }
+
+    /// Dose text for a spoken or typed amount: nil = plan dose; a bare number
+    /// ("2", "0,5") gets the plan unit ("2 Hub"), anything else is kept.
+    static func dose(_ amount: String?, for item: MedicationPlanItem) -> String? {
+        guard let amount = amount?.trimmingCharacters(in: .whitespacesAndNewlines), !amount.isEmpty else {
+            return item.planDose
+        }
+        let numeric = amount.replacingOccurrences(of: ",", with: ".")
+        if Double(numeric) != nil, let unit = item.unit {
+            return "\(amount) \(unit)"
+        }
+        return String(amount.prefix(80))
+    }
+
     /// Target intakes per day: `per_day`, else the number of times, at least 1.
     var target: Int {
         perDay ?? Swift.max(1, times.count)
@@ -163,12 +181,11 @@ final class MedicationPlanStore: ObservableObject {
         return (done, active.reduce(0) { $0 + $1.target })
     }
 
-    /// Logs one intake of a plan item now (or at `date`).
+    /// Logs one intake of a plan item now (or at `date`); `dose` overrides the plan dose.
     @discardableResult
-    func log(_ item: MedicationPlanItem, at date: Date = Date()) async -> EventStore.Outcome {
-        let dose = item.dose.map { [$0, item.unit].compactMap { $0 }.joined(separator: " ") }
-        return await MedicationStore.shared.add(
-            name: item.name, dose: dose, note: nil, at: date, planItemID: item.serverID
+    func log(_ item: MedicationPlanItem, at date: Date = Date(), dose: String? = nil) async -> EventStore.Outcome {
+        await MedicationStore.shared.add(
+            name: item.name, dose: dose ?? item.planDose, note: nil, at: date, planItemID: item.serverID
         )
     }
 

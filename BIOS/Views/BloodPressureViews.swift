@@ -143,7 +143,8 @@ struct BloodPressureSeriesSection: View {
     let days: Int
 
     var body: some View {
-        let spec = BloodPressureSeriesSection.spec(sys: sys?.model, dia: dia?.model, pulse: pulse?.model, pressure: pressure)
+        let spec = BloodPressureSeriesSection.spec(sys: sys?.model, dia: dia?.model, pulse: pulse?.model,
+                                                  pressure: pressure, days: days)
         let rows = BloodPressureSeriesSection.rows(sys: sys?.model, dia: dia?.model, pulse: pulse?.model)
         ChartCard(
             label: "Blutdruck",
@@ -254,9 +255,12 @@ struct BloodPressureSeriesSection: View {
     }
 
     static func spec(sys: SeriesModel?, dia: SeriesModel?, pulse: SeriesModel? = nil,
-                     pressure: BloodPressureTileModel?) -> ChartSpec {
+                     pressure: BloodPressureTileModel?, days: Int = 90) -> ChartSpec {
         var spec = ChartSpec()
         spec.unit = ChartXUnit.from(resolution: sys?.resolution ?? "day")
+        // Axis follows the 30/90/365 picker even when all readings are recent.
+        spec.setDayRange(days: days)
+        spec.rangeDays = days
         spec.height = 170
         spec.valueUnit = "mmHg"
         spec.seriesLabels = ["sys": "Sys", "dia": "Dia", "puls": "Puls", "praxissys": "Praxis sys", "praxisdia": "Praxis dia"]

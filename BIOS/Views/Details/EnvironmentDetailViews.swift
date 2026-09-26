@@ -42,7 +42,8 @@ struct VirenDetailView: View {
                                 LegendItem(color: BIOSTheme.germany, text: "Deutschland", mark: .dashed),
                             ]
                         ) {
-                            let spec = VirenDetailView.spec(wien: wienEntry?.model, germany: germanyEntry?.model)
+                            let spec = VirenDetailView.spec(wien: wienEntry?.model, germany: germanyEntry?.model,
+                                                           days: weeks == 26 ? 182 : 365)
                             if spec.isEmpty {
                                 ChartPlaceholder(
                                     isLoading: wienEntry?.isLoading != false || germanyEntry?.isLoading != false,
@@ -109,11 +110,15 @@ struct VirenDetailView: View {
         }
     }
 
-    static func spec(wien wienModel: SeriesModel?, germany germanyModel: SeriesModel?) -> ChartSpec {
+    static func spec(wien wienModel: SeriesModel?, germany germanyModel: SeriesModel?, days: Int = 182) -> ChartSpec {
         var spec = ChartSpec()
         let resolution = wienModel?.resolution ?? germanyModel?.resolution ?? "week"
         spec.unit = resolution == "day" ? .day : .week
-        spec.rangeDays = wienModel?.days ?? germanyModel?.days ?? 182
+        spec.rangeDays = wienModel?.days ?? germanyModel?.days ?? days
+        // Axis follows the 6/12 months picker, also when a region has fewer samples.
+        let now = Date()
+        spec.xStart = now.addingTimeInterval(-Double(spec.rangeDays) * 86_400)
+        spec.xEnd = now.addingTimeInterval(3.5 * 86_400)
         spec.height = 170
         spec.yMin = 0
         spec.yMax = 100
