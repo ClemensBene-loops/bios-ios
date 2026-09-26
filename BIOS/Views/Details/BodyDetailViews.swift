@@ -214,7 +214,8 @@ struct RecoveryDetailView: View {
                     }
                     .accessibilityElement(children: .combine)
                     StatGrid(columns: 2) {
-                        StatItem(label: "Schlaf", value: BIOSFormat.number(recovery?.sleepHours, digits: 1), unit: "h")
+                        StatItem(label: recovery?.sleep?.hasNaps == true ? "Schlaf (Haupt)" : "Schlaf",
+                                 value: BIOSFormat.number(recovery?.mainSleepHours, digits: 1), unit: "h")
                         StatItem(label: "HRV", value: BIOSFormat.number(recovery?.hrv), unit: "ms")
                         StatItem(label: "Ruhepuls", value: BIOSFormat.number(recovery?.rhr), unit: "bpm")
                         StatItem(label: "Atmung", value: BIOSFormat.number(recovery?.respRate, digits: 1), unit: "/min")
@@ -223,9 +224,13 @@ struct RecoveryDetailView: View {
                 .foregroundStyle(BIOSTheme.text1)
                 .biosCard()
 
+                if let sleep = recovery?.sleep {
+                    SleepBreakdownCard(sleep: sleep)
+                }
+
                 RangePicker(days: $days)
                 MetricChartCard(kind: .recovery, days: days)
-                MetricChartCard(kind: .sleep, days: days)
+                SleepChartCard(days: days)
                 MetricChartCard(kind: .hrv, days: days)
                 MetricChartCard(kind: .rhr, days: days)
                 NoteText(text: "Recovery gehört zur Aufwach-Zeit (\(recovery?.nightText ?? "letzte Nacht")). Whoop bewertet einen Schlaf neu, wenn er verlängert wird, die letzte Bewertung gilt.")
@@ -281,6 +286,13 @@ struct InsulinDetailView: View {
                 .foregroundStyle(BIOSTheme.text1)
                 .biosCard()
 
+                NavigationLink {
+                    TherapyView()
+                } label: {
+                    TherapyLinkRow()
+                }
+                .buttonStyle(CardButtonStyle())
+
                 RangePicker(days: $days)
                 MetricChartCard(kind: .tdd, days: days)
                 MetricChartCard(kind: .per10g, days: days)
@@ -323,6 +335,13 @@ struct LoopDetailView: View {
                             value: loop?.lastSensorChange.map { BIOSFormat.relative($0) } ?? "n. v.")
                 }
                 .background(BIOSTheme.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+
+                NavigationLink {
+                    TherapyView()
+                } label: {
+                    TherapyLinkRow()
+                }
+                .buttonStyle(CardButtonStyle())
 
                 SeriesReader(request: SeriesStore.Request(metric: "iob", days: 1, source: nil)) { entry in
                     ChartCard(
@@ -424,5 +443,39 @@ struct InfoRow: View {
             Rectangle().fill(BIOSTheme.separator).frame(height: 0.5).padding(.leading, 50)
         }
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// Card row that opens "Loop-Einstellungen" (with the assistant status if loaded).
+struct TherapyLinkRow: View {
+    @ObservedObject private var store = TherapyStore.shared
+
+    var body: some View {
+        let suggestions = store.model?.suggestions
+        HStack(spacing: 12) {
+            Image(systemName: "slider.horizontal.3")
+                .foregroundStyle(BIOSTheme.insulin)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Loop-Einstellungen")
+                    .font(.body.weight(.semibold))
+                Text(subtitle(suggestions))
+                    .font(.footnote)
+                    .foregroundStyle(BIOSTheme.text2)
+            }
+            Spacer(minLength: 8)
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(BIOSTheme.text3)
+        }
+        .foregroundStyle(BIOSTheme.text1)
+        .padding(14)
+        .background(BIOSTheme.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .accessibilityElement(children: .combine)
+    }
+
+    private func subtitle(_ suggestions: TherapySuggestions?) -> String {
+        guard let suggestions else { return "Basal, KH-Verhältnis, Empfindlichkeit, Ziel, abgegeben Ø" }
+        return "Basal-Vorschlag: " + (suggestions.recommended ? "zur Übernahme empfohlen" : "nicht zur Übernahme empfohlen")
     }
 }

@@ -721,6 +721,8 @@ struct RecoveryTileModel {
     let hrv: Double?
     let rhr: Double?
     let respRate: Double?
+    /// Main sleep + naps (additive `sleep` block), nil on older servers.
+    let sleep: SleepBreakdown?
 
     init(json: JSONValue) {
         date = json.str("date")
@@ -732,12 +734,72 @@ struct RecoveryTileModel {
         hrv = json.double("hrv")
         rhr = json.double("rhr")
         respRate = json.double("resp_rate")
+        sleep = SleepBreakdown(json: json.obj("sleep"))
+    }
+
+    /// Main sleep in hours (block first, then the older `sleep_h`).
+    var mainSleepHours: Double? {
+        sleep?.mainH ?? sleepHours
     }
 
     /// "Nacht auf Fr"
     var nightText: String {
         guard let day = BIOSDate.day(date) else { return "letzte Nacht" }
         return "Nacht auf \(BIOSFormat.weekdayShort(day))"
+    }
+}
+
+/// `tiles.recovery.sleep`: main sleep, naps and total of the Whoop day.
+struct SleepBreakdown {
+    struct Nap: Identifiable {
+        let id: Int
+        let start: Date?
+        let end: Date?
+        let hours: Double?
+
+        var text: String {
+            var parts: [String] = []
+            if let start {
+                parts.append(end.map { "\(BIOSFormat.time(start)) bis \(BIOSFormat.time($0))" } ?? BIOSFormat.time(start))
+            }
+            if let hours { parts.append(SleepBreakdown.duration(hours)) }
+            return parts.joined(separator: " · ")
+        }
+    }
+
+    let mainH: Double?
+    let napsH: Double?
+    let totalH: Double?
+    let naps: [Nap]
+
+    init?(json: JSONValue?) {
+        guard let json else { return nil }
+        let main = json.double("main_h") ?? json.double("main")
+        mainH = main
+        var naps: [Nap] = []
+        for element in json.list("naps") {
+            let start = BIOSDate.parse(element.str("start"))
+            let end = BIOSDate.parse(element.str("end"))
+            var hours = element.double("h") ?? element.double("duration_h") ?? element.double("hours")
+                ?? element.double("minutes").map { $0 / 60 }
+            if hours == nil, let start, let end { hours = end.timeIntervalSince(start) / 3_600 }
+            naps.append(Nap(id: naps.count, start: start, end: end, hours: hours))
+        }
+        self.naps = naps
+        let napHours = json.double("naps_h") ?? (naps.isEmpty ? nil : naps.compactMap(\.hours).reduce(0, +))
+        napsH = napHours
+        let total = json.double("total_h") ?? main.map { $0 + (napHours ?? 0) }
+        totalH = total
+        if main == nil, total == nil { return nil }
+    }
+
+    var hasNaps: Bool {
+        (napsH ?? 0) > 0.01 || !naps.isEmpty
+    }
+
+    /// "7:25 h" style is ambiguous in German; decimal hours with one digit.
+    static func duration(_ hours: Double) -> String {
+        hours < 1 ? "\(BIOSFormat.number(hours * 60)) min" : "\(BIOSFormat.number(hours, digits: 1)) h"
     }
 }
 

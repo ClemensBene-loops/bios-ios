@@ -23,7 +23,7 @@ struct KoerperView: View {
                 MetricChartCard(kind: .recovery, days: days, compact: true)
                 MetricChartCard(kind: .rhr, days: days, compact: true)
                 MetricChartCard(kind: .hrv, days: days, compact: true)
-                MetricChartCard(kind: .sleep, days: days, compact: true)
+                SleepChartCard(days: days, compact: true)
 
                 BodyTemperatureSection(days: days)
 

@@ -310,7 +310,10 @@ struct RecoveryTile: View {
     private func sleepLine(_ recovery: RecoveryTileModel) -> Text {
         var text = Text(Image(systemName: "moon"))
         text = text + Text(" Schlaf ")
-        text = text + Text.value("\(BIOSFormat.number(recovery.sleepHours, digits: 1)) h")
+        text = text + Text.value("\(BIOSFormat.number(recovery.mainSleepHours, digits: 1)) h")
+        if let sleep = recovery.sleep, sleep.hasNaps, let naps = sleep.napsH {
+            text = text + Text(" + Nap ") + Text.value(SleepBreakdown.duration(naps))
+        }
         return text
     }
 
@@ -325,7 +328,8 @@ struct RecoveryTile: View {
     private var accessibilityText: String {
         guard let recovery else { return "Recovery, keine Daten" }
         return "Recovery \(BIOSFormat.number(recovery.recovery)) Prozent, \(recovery.zone.word). "
-            + "Schlaf \(BIOSFormat.number(recovery.sleepHours, digits: 1)) Stunden, "
+            + "Schlaf \(BIOSFormat.number(recovery.mainSleepHours, digits: 1)) Stunden, "
+            + (recovery.sleep?.hasNaps == true ? "dazu Naps \(SleepBreakdown.duration(recovery.sleep?.napsH ?? 0)), " : "")
             + "HRV \(BIOSFormat.number(recovery.hrv)) ms, Ruhepuls \(BIOSFormat.number(recovery.rhr))"
     }
 }
