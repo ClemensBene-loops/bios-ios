@@ -18,6 +18,7 @@ struct KoerperView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 12) {
+                WhoopRefreshStatusLine()
                 BodyMapSection()
 
                 RangePicker(days: $days)
@@ -47,9 +48,11 @@ struct KoerperView: View {
         .biosPageBackground()
         .navigationTitle("Körper")
         .refreshable {
-            await DashboardStore.shared.refresh(force: true)
-            await BodyMapStore.shared.refresh(force: true)
-            await SeriesStore.shared.refreshLoaded()
+            // Fresh Whoop pull first (see WhoopRefreshStore), then the usual reload.
+            await WhoopRefreshStore.shared.pullToRefresh(owner: "koerper")
+        }
+        .onDisappear {
+            WhoopRefreshStore.shared.cancel(owner: "koerper")
         }
     }
 }

@@ -43,6 +43,7 @@ struct HeuteView: View {
                 .padding(.horizontal, 4)
 
                 StoreStatusBanner()
+                WhoopRefreshStatusLine()
 
                 if let health = dashboard?.health {
                     // Design A: Gesundheits-Score, compact Infekt-Check, Routine.
@@ -95,9 +96,12 @@ struct HeuteView: View {
         .biosPageBackground()
         .navigationTitle("Heute")
         .refreshable {
-            await dashboardStore.refresh(force: true)
-            await seriesStore.refreshLoaded()
-            await BodyMapStore.shared.refresh(force: true)
+            // Requests a fresh Whoop pull first, then reloads dashboard, series
+            // and body map; polls in the background while the pull is queued.
+            await WhoopRefreshStore.shared.pullToRefresh(owner: "heute")
+        }
+        .onDisappear {
+            WhoopRefreshStore.shared.cancel(owner: "heute")
         }
         .sheet(item: $quickLog) { target in
             QuickLogSheet(start: target)
@@ -150,6 +154,34 @@ struct StoreStatusBanner: View {
         }
         if dashboardStore.dashboard?.isNewerSchema == true {
             NotEvaluableBox(title: "Neue Server-Version", text: "Einige Felder zeigt erst ein App-Update an.")
+        }
+    }
+}
+
+/// Small status of the Whoop pull after pull-to-refresh ("Whoop wird abgerufen …",
+/// "Whoop aktualisiert 12:42", "Whoop zuletzt 12:42, nächster Abruf ab 12:52").
+/// Shows nothing without a recent status (offline, errors, older server).
+struct WhoopRefreshStatusLine: View {
+    @ObservedObject private var store = WhoopRefreshStore.shared
+
+    var body: some View {
+        if let text = store.statusText() {
+            HStack(spacing: 6) {
+                if store.isWaiting {
+                    ProgressView()
+                        .controlSize(.mini)
+                } else {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.caption2)
+                }
+                Text(text)
+                    .monospacedDigit()
+            }
+            .font(.footnote)
+            .foregroundStyle(BIOSTheme.text2)
+            .padding(.horizontal, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
         }
     }
 }

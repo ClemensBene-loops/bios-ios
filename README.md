@@ -61,8 +61,15 @@ symbol or text, Dynamic Type and VoiceOver labels, no third-party dependencies
   days as red dots, context days (glucose/insulin up) as indigo diamonds.
 - **Offline**: `/v1/dashboard`, `/v1/bodymap` and every loaded series are cached as
   raw JSON in Application Support (`DiskCache`); offline the app shows the last
-  state with a "wifi.slash" hint. Pull to refresh reloads the dashboard, the body
-  map and the loaded series.
+  state with a "wifi.slash" hint. Pull to refresh (Heute, Körper) first asks the
+  server for a Whoop pull (`POST /v1/refresh`, at most one per 10 min), reloads the
+  dashboard, the body map and the loaded series, and while the pull is queued polls
+  `GET /v1/refresh` every 8 s (at most 90 s, cancelled when the screen is left)
+  until `last_pull` changes, then reloads once more (`WhoopRefreshStore`). A small
+  line says "Whoop wird abgerufen …", "Whoop aktualisiert 12:42" or "Whoop zuletzt
+  12:42, nächster Abruf ab 12:52"; offline, errors or an older server fall back to
+  the plain reload without a message. Tapping the "Stand" line reloads only the
+  dashboard and the loaded series.
 - **Push registration** (unchanged from v1): on every launch the app asks for
   permission, registers with APNs and uploads the token (`POST /v1/devices`) with
   retry and backoff; banners also show in the foreground.
@@ -80,10 +87,15 @@ German reason (Kreislauf names its parts: resting HR level, training minutes,
 blood pressure). Observation only; the score never hides a warning.
 
 - **Heute card** (`HealthScoreCard`): ring 138 pt / line 11 pt with number and
-  level word, delta pill, freshness line, pillar grid (3 columns). Tap opens the
+  level word, delta pill, freshness line, pillar grid (3 columns); with formula 2
+  and `cap.applied` a subtle line "Gedeckelt: Infektmuster Tag 4 · ohne Deckel 65"
+  (`cap.reason`, `cap.uncapped`). Tap opens the
   detail.
 - **Detail** (`HealthDetailView`, route `gesundheit`): ring 130 pt / line 10 pt,
-  pillar list with bars, trends and reasons, "keine Daten" for a missing pillar.
+  pillar list with bars, trends and reasons, "keine Daten" for a missing pillar;
+  under the ring the cap reason (unless the subline already says it), "ohne
+  Deckel n" and `penalty.reason` ("Abzug 6: Schlaf 24 unter 40"). `cap`,
+  `penalty` and `formula_version` are decoded leniently (missing = not shown).
 - **Live Activity**: the same ring on the lock screen (56 / 4.5) and in the
   Dynamic Island (44 / 3.5) from `pillars_mini`.
 
@@ -438,6 +450,7 @@ limit) or 503.
 | `POST/DELETE/GET /v1/events` | alcohol marks per day |
 | `GET/PUT /v1/supplements`, `POST/GET /v1/intake` | supplement regimen and daily ticks |
 | `POST/GET /v1/medications`, `DELETE /v1/medications/{id}` | medication log |
+| `POST /v1/refresh`, `GET /v1/refresh` | pull to refresh: request a rate-limited Whoop pull, poll its state (`queued`, `reason`, `last_pull`, `next_allowed_at`, `pending`) |
 | `POST /v1/test-push` | test push to this device |
 | `POST /v1/live-activity/token`, `DELETE /v1/live-activity/token/{token}`, `GET /v1/live-activity` | Live Activity push tokens (`start`, `update`) and the current content state |
 

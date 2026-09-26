@@ -86,6 +86,11 @@ struct HealthModel {
     let headline: String?
     let subline: String?
     let generatedAt: Date?
+    /// Formula 2 cap (`cap`, additive since 26.09.2026); nil when absent or not applied.
+    let cap: HealthCap?
+    /// Weakest-link deduction text (`penalty.reason`, "Abzug 6: Schlaf 24 unter 40").
+    let penaltyReason: String?
+    let formulaVersion: Int?
 
     init?(json: JSONValue?) {
         guard let json, json.objectValue != nil else { return nil }
@@ -106,7 +111,23 @@ struct HealthModel {
         headline = json.str("headline")
         subline = json.str("subline") ?? json.str("text")
         generatedAt = BIOSDate.parse(json.str("generated_at"))
+        cap = json.obj("cap").flatMap { HealthCap(json: $0) }
+        penaltyReason = json.obj("penalty")?.str("reason")
+        formulaVersion = json.int("formula_version")
         if score == nil, pillars.isEmpty { return nil }
+    }
+
+    /// "Gedeckelt: Infektmuster Tag 4 · ohne Deckel 65" for the Heute card.
+    var capLine: String? {
+        guard let cap else { return nil }
+        return [cap.reason, cap.uncappedText].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    /// Detail: the cap reason unless the subline already says it.
+    var capReasonForDetail: String? {
+        guard let reason = cap?.reason else { return nil }
+        if let second = secondText, second.localizedCaseInsensitiveContains(reason) { return nil }
+        return reason
     }
 
     /// Level word ("gut") and its color: server word, else from the score
@@ -162,6 +183,38 @@ struct HealthModel {
 
     var freshnessText: String {
         dropped.isEmpty ? "Alle Daten aktuell" : "Ohne: " + dropped.joined(separator: ", ")
+    }
+}
+
+/// `health.cap` when it lowered the score (`applied`). Lenient: without
+/// `applied: true` there is nothing to show.
+struct HealthCap {
+    /// "Gedeckelt: Infektmuster Tag 4" (server text, else built from `cause`/`max`).
+    let reason: String?
+    /// Score before the cap.
+    let uncapped: Double?
+    let max: Double?
+    let kind: String?
+
+    init?(json: JSONValue) {
+        guard json.flag("applied") else { return nil }
+        uncapped = json.double("uncapped").map { Swift.max(0, Swift.min(100, $0)) }
+        max = json.double("max")
+        kind = json.str("kind")
+        if let reason = json.str("reason") {
+            self.reason = reason
+        } else if let cause = json.str("cause") {
+            self.reason = "Gedeckelt: \(cause)"
+        } else if let max {
+            self.reason = "Gedeckelt auf \(BIOSFormat.number(max))"
+        } else {
+            self.reason = "Gedeckelt"
+        }
+    }
+
+    /// "ohne Deckel 65"
+    var uncappedText: String? {
+        uncapped.map { "ohne Deckel \(BIOSFormat.number($0))" }
     }
 }
 

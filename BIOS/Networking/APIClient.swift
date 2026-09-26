@@ -132,6 +132,27 @@ struct APIClient: Sendable {
         return TestPushResult(json: value)
     }
 
+    /// `POST /v1/refresh`: asks the server for a rate-limited Whoop pull (202).
+    /// One short attempt: pull-to-refresh falls back to the normal reload on any error.
+    func requestWhoopRefresh() async throws -> WhoopRefreshState {
+        try await refreshCall(method: "POST")
+    }
+
+    /// `GET /v1/refresh`: state of the Whoop pull without requesting one.
+    func fetchWhoopRefreshState() async throws -> WhoopRefreshState {
+        try await refreshCall(method: "GET")
+    }
+
+    private func refreshCall(method: String) async throws -> WhoopRefreshState {
+        let single = APIClient(baseURL: baseURL, secret: secret, session: session, maxAttempts: 1)
+        var request = single.makeRequest(path: ["v1", "refresh"], method: method)
+        request.timeoutInterval = 8
+        let data = try await single.send(request)
+        let value = try JSONDecoder().decode(JSONValue.self, from: data)
+        guard value.objectValue != nil else { throw APIError.invalidResponse }
+        return WhoopRefreshState(json: value)
+    }
+
     /// GET returning a JSON object (anything else is an invalid response).
     func getJSON(path: [String], query: [URLQueryItem] = []) async throws -> JSONValue {
         let request = makeRequest(path: path, query: query, method: "GET")
@@ -219,6 +240,43 @@ struct TestPushResult: Equatable, Sendable {
         apnsStatus = json.int("apns_status")
         apnsReason = json.str("apns_reason")
         removed = json.flag("removed")
+    }
+}
+
+/// Answer of `POST /v1/refresh` (202) and `GET /v1/refresh` (200). Lenient:
+/// missing fields fall back to nil/false (GET has no `queued`/`reason`).
+struct WhoopRefreshState: Equatable, Sendable {
+    let queued: Bool
+    /// `queued` (newly requested), `pending` (already waiting), `recent` (pulled < interval ago).
+    let reason: String?
+    /// Raw `last_pull`, compared to notice a new pull when it does not parse.
+    let lastPullRaw: String?
+    let lastPull: Date?
+    let nextAllowedAt: Date?
+    let pending: Bool
+    let intervalSeconds: Int?
+
+    init(json: JSONValue) {
+        queued = json.flag("queued")
+        reason = json.str("reason")?.lowercased()
+        lastPullRaw = json.str("last_pull")
+        lastPull = BIOSDate.parse(lastPullRaw)
+        nextAllowedAt = BIOSDate.parse(json.str("next_allowed_at"))
+        pending = json.flag("pending")
+        intervalSeconds = json.int("interval_s")
+    }
+
+    /// A pull is requested or waits for the server's minute cron.
+    var isWaiting: Bool {
+        queued || pending || reason == "queued" || reason == "pending"
+    }
+
+    /// Whether `other` reports a newer successful pull than this state.
+    func hasNewerPull(_ other: WhoopRefreshState) -> Bool {
+        guard let newRaw = other.lastPullRaw else { return false }
+        guard let oldRaw = lastPullRaw else { return true }
+        if let old = lastPull, let new = other.lastPull { return new > old }
+        return newRaw != oldRaw
     }
 }
 

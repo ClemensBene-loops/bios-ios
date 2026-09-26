@@ -99,6 +99,14 @@ struct HealthScoreCard: View {
                             .font(.caption)
                             .foregroundStyle(BIOSTheme.text2)
                             .fixedSize(horizontal: false, vertical: true)
+                        if let capLine = health.capLine {
+                            // Formula 2: the score is capped (Infekt, Frühzeichen, Fieber).
+                            Text(capLine)
+                                .font(.caption)
+                                .foregroundStyle(BIOSTheme.text3)
+                                .monospacedDigit()
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     Spacer(minLength: 0)
                 }
@@ -435,6 +443,17 @@ struct HealthDetailView: View {
                     .foregroundStyle(BIOSTheme.text1)
                     .padding(.horizontal, 4)
 
+                    if let details = scoreDetails(health) {
+                        // Formula 2: cap reason, value before the cap, weakest-link deduction.
+                        Text(details)
+                            .font(.footnote)
+                            .foregroundStyle(BIOSTheme.text2)
+                            .monospacedDigit()
+                            .padding(.horizontal, 4)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
                     VStack(spacing: 0) {
                         ForEach(Array(health.pillars.enumerated()), id: \.element.id) { entry in
                             PillarRow(pillar: entry.element)
@@ -464,6 +483,26 @@ struct HealthDetailView: View {
             .padding(.bottom, 24)
         }
         .biosPageBackground()
+    }
+
+    /// "Gedeckelt: Infektmuster Tag 4, ohne Deckel 65. Abzug 6: Schlaf 24 unter 40."
+    /// (the cap reason only when the subline does not already say it).
+    private func scoreDetails(_ health: HealthModel) -> String? {
+        var sentences: [String] = []
+        let capParts = [health.capReasonForDetail, health.cap?.uncappedText].compactMap { $0 }
+        if !capParts.isEmpty {
+            sentences.append(Self.sentence(capParts.joined(separator: ", ")))
+        }
+        if let penalty = health.penaltyReason {
+            sentences.append(Self.sentence(penalty))
+        }
+        return sentences.isEmpty ? nil : sentences.joined(separator: " ")
+    }
+
+    private static func sentence(_ text: String) -> String {
+        guard let first = text.first else { return text }
+        let capitalized = first.uppercased() + text.dropFirst()
+        return capitalized.hasSuffix(".") ? capitalized : capitalized + "."
     }
 }
 
