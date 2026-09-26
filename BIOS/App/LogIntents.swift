@@ -236,7 +236,7 @@ enum LogIntentRunner {
     static func supplement(id: String, name: String, taken: Bool) async -> String {
         let store = SupplementStore.shared
         let day = EventStore.dayString(Date())
-        var item = store.allItems.first { $0.serverID == id } ?? SupplementItem(name: name)
+        var item = store.allItems.first(where: { $0.serverID == id }) ?? SupplementItem(name: name)
         item.serverID = id
         let outcome = await store.setTaken(item, on: day, taken: taken)
         switch outcome {
@@ -255,7 +255,7 @@ enum LogIntentRunner {
     static func medication(id: String, name: String) async -> String {
         let store = MedicationPlanStore.shared
         let day = EventStore.dayString(Date())
-        var item = store.allItems.first { $0.serverID == id } ?? MedicationPlanItem(name: name)
+        var item = store.allItems.first(where: { $0.serverID == id }) ?? MedicationPlanItem(name: name)
         item.serverID = id
         let outcome = await store.log(item)
         let time = BIOSFormat.time(Date())

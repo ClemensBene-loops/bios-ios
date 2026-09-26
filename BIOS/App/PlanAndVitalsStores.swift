@@ -159,8 +159,8 @@ final class MedicationPlanStore: ObservableObject {
     /// (taken, target) summed over the plan of a day.
     func progress(on day: String) -> (taken: Int, total: Int) {
         let active = activeItems(on: day)
-        let taken = active.reduce(0) { $0 + Swift.min(taken($1, on: day), $1.target) }
-        return (taken, active.reduce(0) { $0 + $1.target })
+        let done = active.reduce(0) { $0 + Swift.min(self.taken($1, on: day), $1.target) }
+        return (done, active.reduce(0) { $0 + $1.target })
     }
 
     /// Logs one intake of a plan item now (or at `date`).
