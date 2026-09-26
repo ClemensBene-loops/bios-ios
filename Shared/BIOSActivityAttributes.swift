@@ -6,12 +6,13 @@ import SwiftUI
 // the widget extension BIOSWidgets (draws lock screen banner and Dynamic
 // Island). Compiled into both targets from Shared/ (project.yml).
 //
-// The server starts (push-to-start, iOS 17.2+) and updates the activity via
-// APNs with `attributes-type: "BIOSActivityAttributes"`; the JSON of
-// `content-state` is decoded with `ContentState.init(from:)` below. Every
-// field is optional and decoded leniently: an unknown or missing field must
-// never make ActivityKit drop a push. Times are strings ("12:30") and epoch
-// seconds, never `Date` (ActivityKit decodes Date as seconds since 2001).
+// The server starts (push-to-start, iOS 17.2+), updates and ends the
+// activity via APNs with `attributes-type: "BIOSActivityAttributes"` and
+// `attributes: {}`; `content-state` is the ContentState of docs/API_v1.md
+// ("Live Activity", BIOS repo), keys exactly as below. Every field is
+// optional and decoded leniently: an unknown, missing or mistyped field must
+// never make ActivityKit drop a push. No `Date` fields (ActivityKit's decoder
+// would read them as seconds since 2001): times stay ISO strings.
 
 /// Static part of the BIOS Live Activity. Deliberately empty: push-to-start
 /// sends `"attributes": {}` and everything that changes lives in ContentState.
@@ -19,13 +20,13 @@ struct BIOSActivityAttributes: ActivityAttributes {
     typealias ContentState = BIOSActivityState
 }
 
-/// What the banner shows right now.
+/// What the banner shows right now (`mode`).
 enum BIOSActivityMode: String, Codable, Hashable, Sendable {
     /// Next intake (medication + time).
     case normal
-    /// Infection episode: "Infekt · Tag n", infection score, next intake.
+    /// Whoop alarm infekt / infekt_frueh: "Infekt · Tag n", infection score, next intake.
     case infection
-    /// Elevated temperature: value, measurement time, "Erhöht", next intake.
+    /// >= 37.5 °C within 12 h: value, measurement time, "Erhöht", next intake.
     case temperature
 
     init(raw: String?) {
@@ -37,101 +38,147 @@ enum BIOSActivityMode: String, Codable, Hashable, Sendable {
     }
 }
 
-/// `content-state` of the BIOS Live Activity (JSON keys in snake_case).
+/// `content-state` of the BIOS Live Activity (server contract, snake_case).
 struct BIOSActivityState: Codable, Hashable, Sendable {
-    var mode: BIOSActivityMode = .normal
-    /// Gesundheits-Score 0...100 and its level word ("gut").
+    /// `next_medication`: first open plan time today.
+    struct NextMedication: Codable, Hashable, Sendable {
+        var name: String?
+        /// "HH:MM"
+        var time: String?
+        var overdue: Bool?
+        /// App only: plan item id for "Genommen" (the server sends the name).
+        var id: String?
+        /// App only: moved with "Später".
+        var later: Bool?
+
+        init(name: String?, time: String?, overdue: Bool? = nil, id: String? = nil, later: Bool? = nil) {
+            self.name = name
+            self.time = time
+            self.overdue = overdue
+            self.id = id
+            self.later = later
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case name, time, overdue, id, later
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            name = LenientDecoding.string(c, .name)
+            time = LenientDecoding.string(c, .time)
+            overdue = LenientDecoding.bool(c, .overdue)
+            id = LenientDecoding.string(c, .id) ?? LenientDecoding.int(c, .id).map(String.init)
+            later = LenientDecoding.bool(c, .later)
+        }
+    }
+
+    /// `supplements`: today's ticks.
+    struct Supplements: Codable, Hashable, Sendable {
+        var taken: Int?
+        var total: Int?
+
+        init(taken: Int?, total: Int?) {
+            self.taken = taken
+            self.total = total
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case taken, total
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            taken = LenientDecoding.int(c, .taken)
+            total = LenientDecoding.int(c, .total)
+        }
+    }
+
     var healthScore: Int?
     var healthLevel: String?
-    /// Pillar scores 0...100 by key: sleep, recovery, metabolism,
-    /// circulation, immune, routine (ring segments, missing = empty slot).
-    var pillars: [String: Double]?
-    /// Overall attention level for the status dot: "ok", "info", "warn".
-    var status: String?
+    /// Six pillar scores 0...100 in ring order Schlaf, Erholung, Stoffwechsel,
+    /// Kreislauf, Abwehr, Routine (null = no data, empty slot).
+    var pillarsMini: [Double?]?
+    var mode: BIOSActivityMode = .normal
     var infectionScore: Int?
     var infectionDay: Int?
-    /// Body temperature in °C, time of the measurement ("08:05"), label ("Erhöht").
+    /// "infekt" or "infekt_frueh".
+    var infectionKind: String?
+    /// °C, time of the measurement (ISO), >= 37.5 within 12 h.
     var temperature: Double?
-    var temperatureTime: String?
-    var temperatureLabel: String?
-    /// Next planned intake: plan item id (for "Genommen"), name, time "HH:MM".
-    var nextMedicationID: String?
-    var nextMedication: String?
-    var nextTime: String?
-    /// Label above the intake ("Nächste Einnahme", "Später").
-    var nextLabel: String?
-    var supplementsTaken: Int?
-    var supplementsTotal: Int?
-    /// Unix seconds of the data this state was built from.
-    var updatedAt: Double?
+    var temperatureAt: String?
+    var temperatureHigh: Bool?
+    var nextMedication: NextMedication?
+    var supplements: Supplements?
+    /// ISO time of the data.
+    var updatedAt: String?
 
     init() {}
 
     enum CodingKeys: String, CodingKey {
-        case mode
         case healthScore = "health_score"
         case healthLevel = "health_level"
-        case pillars
-        case status
+        case pillarsMini = "pillars_mini"
+        case mode
         case infectionScore = "infection_score"
         case infectionDay = "infection_day"
+        case infectionKind = "infection_kind"
         case temperature
-        case temperatureTime = "temperature_time"
-        case temperatureLabel = "temperature_label"
-        case nextMedicationID = "next_medication_id"
+        case temperatureAt = "temperature_at"
+        case temperatureHigh = "temperature_high"
         case nextMedication = "next_medication"
-        case nextTime = "next_time"
-        case nextLabel = "next_label"
-        case supplementsTaken = "supplements_taken"
-        case supplementsTotal = "supplements_total"
+        case supplements
         case updatedAt = "updated_at"
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        mode = BIOSActivityMode(raw: Self.string(c, .mode))
-        healthScore = Self.int(c, .healthScore)
-        healthLevel = Self.string(c, .healthLevel)
-        pillars = (try? c.decodeIfPresent([String: Double].self, forKey: .pillars)) ?? nil
-        status = Self.string(c, .status)
-        infectionScore = Self.int(c, .infectionScore)
-        infectionDay = Self.int(c, .infectionDay)
-        temperature = Self.double(c, .temperature)
-        temperatureTime = Self.string(c, .temperatureTime)
-        temperatureLabel = Self.string(c, .temperatureLabel)
-        // Plan ids may arrive as number or string.
-        nextMedicationID = Self.string(c, .nextMedicationID) ?? Self.int(c, .nextMedicationID).map(String.init)
-        nextMedication = Self.string(c, .nextMedication)
-        nextTime = Self.string(c, .nextTime)
-        nextLabel = Self.string(c, .nextLabel)
-        supplementsTaken = Self.int(c, .supplementsTaken)
-        supplementsTotal = Self.int(c, .supplementsTotal)
-        updatedAt = Self.double(c, .updatedAt)
+        healthScore = LenientDecoding.int(c, .healthScore)
+        healthLevel = LenientDecoding.string(c, .healthLevel)
+        pillarsMini = (try? c.decodeIfPresent([Double?].self, forKey: .pillarsMini)) ?? nil
+        mode = BIOSActivityMode(raw: LenientDecoding.string(c, .mode))
+        infectionScore = LenientDecoding.int(c, .infectionScore)
+        infectionDay = LenientDecoding.int(c, .infectionDay)
+        infectionKind = LenientDecoding.string(c, .infectionKind)
+        temperature = LenientDecoding.double(c, .temperature)
+        temperatureAt = LenientDecoding.string(c, .temperatureAt)
+        temperatureHigh = LenientDecoding.bool(c, .temperatureHigh)
+        nextMedication = (try? c.decodeIfPresent(NextMedication.self, forKey: .nextMedication)) ?? nil
+        supplements = (try? c.decodeIfPresent(Supplements.self, forKey: .supplements)) ?? nil
+        updatedAt = LenientDecoding.string(c, .updatedAt)
     }
+}
 
-    private static func string(_ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> String? {
+/// decodeIfPresent that turns a wrong type into nil instead of an error.
+enum LenientDecoding {
+    static func string<K: CodingKey>(_ c: KeyedDecodingContainer<K>, _ key: K) -> String? {
         guard let value = (try? c.decodeIfPresent(String.self, forKey: key)) ?? nil else { return nil }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    private static func double(_ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> Double? {
+    static func double<K: CodingKey>(_ c: KeyedDecodingContainer<K>, _ key: K) -> Double? {
         guard let value = (try? c.decodeIfPresent(Double.self, forKey: key)) ?? nil, value.isFinite else { return nil }
         return value
     }
 
-    private static func int(_ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> Int? {
+    static func int<K: CodingKey>(_ c: KeyedDecodingContainer<K>, _ key: K) -> Int? {
         double(c, key).map { Int($0.rounded()) }
+    }
+
+    static func bool<K: CodingKey>(_ c: KeyedDecodingContainer<K>, _ key: K) -> Bool? {
+        if let value = (try? c.decodeIfPresent(Bool.self, forKey: key)) ?? nil { return value }
+        return double(c, key).map { $0 != 0 }
     }
 }
 
-// MARK: - Display helpers (German, used by the widget and the app preview)
+// MARK: - Display helpers (German, used by the widget)
 
 extension BIOSActivityState {
     /// "3/4 · 1 offen", "4/4 · erledigt", nil without a supplement plan.
     var supplementsText: String? {
-        guard let total = supplementsTotal, total > 0 else { return nil }
-        let taken = min(max(supplementsTaken ?? 0, 0), total)
+        guard let total = supplements?.total, total > 0 else { return nil }
+        let taken = min(max(supplements?.taken ?? 0, 0), total)
         let open = total - taken
         return "\(taken)/\(total) · " + (open == 0 ? "erledigt" : "\(open) offen")
     }
@@ -146,6 +193,16 @@ extension BIOSActivityState {
     var temperatureShortText: String? {
         guard let temperature else { return nil }
         return BIOSActivityFormat.decimal(temperature) + "°"
+    }
+
+    /// "08:05" of `temperature_at`.
+    var temperatureTime: String? {
+        BIOSActivityFormat.clock(temperatureAt)
+    }
+
+    /// "Erhöht" (>= 37.5), "Fieber" from 38.0.
+    var temperatureLabel: String {
+        (temperature ?? 0) >= 38.0 ? "Fieber" : "Erhöht"
     }
 
     var healthScoreText: String {
@@ -170,34 +227,46 @@ extension BIOSActivityState {
         }
     }
 
-    /// Attention level of the status dot: server `status`, else from the mode.
+    /// Status dot: attention in the infection and temperature modes.
     var attention: BIOSActivityAttention {
-        switch (status ?? "").lowercased() {
-        case "warn", "red", "hoch", "high": return .warn
-        case "info", "yellow", "mittel", "attention": return .info
-        case "ok", "green", "gut": return .ok
-        default:
-            return mode == .normal ? .ok : .info
-        }
+        mode == .normal ? .ok : .info
     }
 
-    /// Next intake line without a plan item: "Heute erledigt".
+    /// Pillar score of ring slot `index` (0...5), nil = no data.
+    func pillar(_ index: Int) -> Double? {
+        guard let values = pillarsMini, values.indices.contains(index) else { return nil }
+        return values[index]
+    }
+
+    var hasNextMedication: Bool {
+        nextMedication?.name != nil
+    }
+
+    /// Next intake name, "Heute erledigt" without an open plan time.
     var medicationText: String {
-        nextMedication ?? "Heute erledigt"
+        nextMedication?.name ?? "Heute erledigt"
     }
 
-    /// Example state for previews and the local fallback before data arrives.
-    /// Illustrative values only, no real data.
+    var nextTime: String? {
+        nextMedication?.time
+    }
+
+    /// Label above the intake: "Nächste Einnahme", "Überfällig", "Später".
+    var nextLabel: String {
+        guard hasNextMedication else { return "Einnahmen" }
+        if nextMedication?.later == true { return "Später" }
+        if nextMedication?.overdue == true { return "Überfällig" }
+        return "Nächste Einnahme"
+    }
+
+    /// Example state for previews. Illustrative values only, no real data.
     static var preview: BIOSActivityState {
         var state = BIOSActivityState()
         state.healthScore = 78
         state.healthLevel = "gut"
-        state.pillars = ["sleep": 82, "recovery": 74, "metabolism": 80, "circulation": 77, "immune": 60, "routine": 85]
-        state.nextMedication = "Beispielmedikament"
-        state.nextMedicationID = "example"
-        state.nextTime = "12:30"
-        state.supplementsTaken = 3
-        state.supplementsTotal = 4
+        state.pillarsMini = [82, 74, 80, 77, 60, 85]
+        state.nextMedication = NextMedication(name: "Beispielmedikament", time: "12:30", overdue: false)
+        state.supplements = Supplements(taken: 3, total: 4)
         return state
     }
 }
@@ -221,6 +290,26 @@ enum BIOSActivityFormat {
     static func decimal(_ value: Double) -> String {
         let rounded = (value * 10).rounded() / 10
         return String(format: "%.1f", rounded).replacingOccurrences(of: ".", with: ",")
+    }
+
+    /// "HH:MM" in local time from an ISO timestamp (with offset), else the
+    /// wall-clock part after "T".
+    static func clock(_ iso: String?) -> String? {
+        guard let iso, !iso.isEmpty else { return nil }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        var date = formatter.date(from: iso)
+        if date == nil {
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            date = formatter.date(from: iso)
+        }
+        if let date {
+            let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
+            return String(format: "%02d:%02d", parts.hour ?? 0, parts.minute ?? 0)
+        }
+        guard let tIndex = iso.firstIndex(of: "T") else { return nil }
+        let clock = iso[iso.index(after: tIndex)...].prefix(5)
+        return clock.count == 5 ? String(clock) : nil
     }
 }
 

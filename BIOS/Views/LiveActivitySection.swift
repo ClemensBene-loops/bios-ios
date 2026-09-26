@@ -25,7 +25,7 @@ struct LiveActivitySection: View {
         } header: {
             Text("Live Activity")
         } footer: {
-            Text("Gesundheits-Score, nächste Einnahme und Supplements auf dem Sperrbildschirm und in der Dynamic Island. Startet beim Öffnen der App, falls keine läuft, der Server aktualisiert sie per Push. Nachts (22 bis 6 Uhr) endet sie.")
+            Text("Gesundheits-Score, nächste Einnahme und Supplements auf dem Sperrbildschirm und in der Dynamic Island. Der Server startet sie um 6:30, aktualisiert sie stündlich per Push und beendet sie um 23:30. Läuft keine, startet die App sie beim Öffnen. Genommen und Später direkt in der Dynamic Island.")
         }
     }
 
@@ -43,7 +43,7 @@ struct LiveActivitySection: View {
             return StatusDisplay(text: "Läuft", symbol: "checkmark.circle", tint: BIOSTheme.good)
         }
         if LiveActivityController.isNight() {
-            return StatusDisplay(text: "Nachtpause bis 6 Uhr", symbol: "moon", tint: BIOSTheme.text3)
+            return StatusDisplay(text: "Nachtpause bis 6:00", symbol: "moon", tint: BIOSTheme.text3)
         }
         return StatusDisplay(text: "Läuft nicht, startet beim nächsten Öffnen", symbol: "circle.dashed", tint: BIOSTheme.text3)
     }

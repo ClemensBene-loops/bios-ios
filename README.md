@@ -110,13 +110,16 @@ per mode (`normal`: next intake; `infection`: "Infekt · Tag n" + Infekt-Score;
 `temperature`: value, time, "Erhöht"), bottom the supplements. Dynamic Island:
 minimal = "b" mark with a status dot (the usual state next to Loop), compact =
 mark + score, expanded with "Genommen" / "Später" (`LiveActivityIntent`, runs in
-the app, logs the intake through the offline queue). The app uploads the
-push-to-start token (iOS 17.2+) and every activity's update token to
-`POST /v1/live-activity/token`; the server starts, updates and ends the activity
-via APNs (`apns-push-type: liveactivity`, topic `at.bene.bios.push-type.liveactivity`,
-`attributes-type: BIOSActivityAttributes`, content-state keys in
-`Shared/BIOSActivityAttributes.swift`). Fallback without server: the app starts a
-local activity when it opens during the day and ends it at night (22 to 6 h).
+the app, logs the intake through the offline queue). The app registers the
+push-to-start token (iOS 17.2+, `kind: start`) and every activity's update token
+(`kind: update` + `activity_id`) with `POST /v1/live-activity/token` (toggle off or
+an ended activity: `DELETE /v1/live-activity/token/{token}`). The server starts the
+activity at 06:30, updates it hourly and ends it at 23:30 via APNs
+(`apns-push-type: liveactivity`, topic `at.bene.bios.push-type.liveactivity`,
+`attributes-type: BIOSActivityAttributes`, `attributes: {}`, content-state keys as
+in `Shared/BIOSActivityAttributes.swift`). Fallback: when the app opens during the
+day and nothing runs, it starts a local activity with `GET /v1/live-activity`
+(offline from the cached dashboard) and ends it at night (23:30 to 6:00).
 Toggle "Live Activity" in Mehr.
 
 ## Repository layout
@@ -279,7 +282,7 @@ limit) or 503.
 | `GET/PUT /v1/supplements`, `POST/GET /v1/intake` | supplement regimen and daily ticks |
 | `POST/GET /v1/medications`, `DELETE /v1/medications/{id}` | medication log |
 | `POST /v1/test-push` | test push to this device |
-| `POST /v1/live-activity/token` | Live Activity push tokens (push-to-start, update, `enabled`, `ended`) |
+| `POST /v1/live-activity/token`, `DELETE /v1/live-activity/token/{token}`, `GET /v1/live-activity` | Live Activity push tokens (`start`, `update`) and the current content state |
 
 Rules the app relies on:
 

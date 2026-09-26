@@ -3,50 +3,47 @@ import Foundation
 import os
 
 // BIOS Live Activity, app side (the views live in the BIOSWidgets extension,
-// the shared types in Shared/BIOSActivityAttributes.swift).
+// the shared types in Shared/BIOSActivityAttributes.swift). Server contract:
+// docs/API_v1.md "Live Activity" in the BIOS repo.
 //
-// - Tokens: the push-to-start token (iOS 17.2+) and the update token of every
-//   running activity go to POST /v1/live-activity/token, so the server can
-//   start the activity in the morning, update it (content-state) and end it
-//   at night via APNs (topic at.bene.bios.push-type.liveactivity).
+// - Tokens: the push-to-start token (iOS 17.2+, kind "start") and the update
+//   token of every running activity (kind "update" + activity_id) go to
+//   POST /v1/live-activity/token; the server starts the activity at 06:30,
+//   updates it hourly and ends it at 23:30 via APNs (topic
+//   at.bene.bios.push-type.liveactivity). Toggle off or an ended activity:
+//   DELETE /v1/live-activity/token/{token}.
 // - Fallback: when the app becomes active during the day and no activity is
-//   running, a local one is started from the cached dashboard and the plan
-//   stores; a running one is refreshed with the same local data.
-// - Night (22 to 6 h): the app ends running activities and starts none.
-// - Toggle "Live Activity" in Mehr (default on): off ends everything and tells
-//   the server (enabled = false) to stop push-to-start.
-// No `NSSupportsLiveActivitiesFrequentUpdates`: the content changes a few
-// times a day (intake, score, temperature), well inside the normal APNs budget.
+//   running, a local one is started with GET /v1/live-activity (the content
+//   the next push would send), offline from the cached dashboard and the
+//   plan stores. A running activity is refreshed the same way.
+// - Night (23:30 to 6:00): the app ends running activities and starts none.
+// No `NSSupportsLiveActivitiesFrequentUpdates`: the server updates at most
+// every hour (at the latest every 90 min), well inside the normal APNs budget.
 
 /// Body of `POST /v1/live-activity/token`.
 struct LiveActivityTokenBody: Encodable, Sendable {
-    /// "push_to_start" (starts new activities) or "update" (one running activity).
-    let kind: String
     /// APNs token, lowercase hex.
     let token: String
-    /// ActivityKit id of the activity (only for "update").
+    /// "start" (push-to-start) or "update" (one running activity).
+    let kind: String
+    /// `activity.id` for "update", else nil (sent as null).
     let activityID: String?
     /// "sandbox" or "production" (see `AppConfig.apnsEnvironment`).
     let environment: String
-    let bundleID: String
-    /// `attributes-type` for push-to-start payloads.
-    let attributesType: String
-    /// false = the user switched the Live Activity off (no push-to-start).
-    let enabled: Bool
-    /// true = this activity has ended, its update token is void.
-    let ended: Bool
-    let appVersion: String
 
     enum CodingKeys: String, CodingKey {
-        case kind
         case token
+        case kind
         case activityID = "activity_id"
         case environment
-        case bundleID = "bundle_id"
-        case attributesType = "attributes_type"
-        case enabled
-        case ended
-        case appVersion = "app_version"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(token, forKey: .token)
+        try container.encode(kind, forKey: .kind)
+        try container.encode(activityID, forKey: .activityID)
+        try container.encode(environment, forKey: .environment)
     }
 }
 
@@ -57,6 +54,20 @@ extension APIClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)
         _ = try await send(request)
+    }
+
+    /// `DELETE /v1/live-activity/token/{token}` (no error if unknown).
+    func deleteLiveActivityToken(_ token: String) async throws {
+        let request = makeRequest(path: ["v1", "live-activity", "token", token], method: "DELETE")
+        _ = try await send(request)
+    }
+
+    /// `GET /v1/live-activity`: `content_state` as the next push would send it.
+    func fetchLiveActivityState() async throws -> BIOSActivityState? {
+        let json = try await getJSON(path: ["v1", "live-activity"])
+        guard let state = json["content_state"], state.objectValue != nil else { return nil }
+        let data = try JSONEncoder().encode(state)
+        return try JSONDecoder().decode(BIOSActivityState.self, from: data)
     }
 }
 
@@ -88,22 +99,21 @@ final class LiveActivityController: ObservableObject {
     @Published private(set) var isRunning = false
     @Published private(set) var tokenStatus: TokenStatus = .none
 
-    /// Evening hour from which activities end, morning hour from which they may start.
-    static let nightStartHour = 22
-    static let morningHour = 6
+    /// Night window in minutes of the day: from 23:30 (server `--end`) to 6:00.
+    static let nightStartMinute = 23 * 60 + 30
+    static let morningMinute = 6 * 60
 
     private static let log = Logger(subsystem: "at.bene.bios", category: "liveactivity")
     private static let enabledKey = "bios.liveActivity.enabled"
     private static let snoozeKey = "bios.liveActivity.snooze"
-    private static let attributesType = "BIOSActivityAttributes"
 
     private var observing = false
     private var observedActivities: Set<String> = []
     private var pushToStartToken: String?
     /// activity id -> update token
     private var activityTokens: [String: String] = [:]
-    /// Uploads that succeeded ("kind|token|enabled|ended"), skipped on retry.
-    private var uploaded: Set<String> = []
+    /// Requests that succeeded ("POST|kind|token", "DELETE|token"), skipped on retry.
+    private var done: Set<String> = []
 
     init() {
         isEnabled = UserDefaults.standard.object(forKey: Self.enabledKey) as? Bool ?? true
@@ -136,7 +146,7 @@ final class LiveActivityController: ObservableObject {
                     let token = Self.hex(data)
                     self.pushToStartToken = token
                     Self.log.info("Push-to-start token \(String(token.prefix(8)), privacy: .public)...")
-                    await self.upload(kind: "push_to_start", token: token, activityID: nil)
+                    await self.syncStartToken()
                 }
             }
         }
@@ -144,41 +154,43 @@ final class LiveActivityController: ObservableObject {
     }
 
     /// App became active: end at night, else start (fallback) or refresh the
-    /// running activity with local data; retry failed token uploads.
+    /// running activity; retry failed token requests.
     func appBecameActive() async {
         systemEnabled = ActivityAuthorizationInfo().areActivitiesEnabled
-        await retryUploads()
+        await retryTokens()
         guard isEnabled, !Self.isNight() else {
             await endAll()
             return
         }
         guard systemEnabled else { return }
+        let state = await currentState(preferServer: true, fallback: runningActivities.first?.content.state)
         if runningActivities.isEmpty {
-            start()
+            start(with: state)
         } else {
-            await updateRunning()
+            await update(with: state)
         }
     }
 
-    /// Refreshes the running activities from the local stores (after an intake).
-    func updateRunning() async {
-        for activity in runningActivities {
-            let state = localState(current: activity.content.state)
-            await activity.update(ActivityContent(state: state, staleDate: Self.staleDate()))
-        }
+    /// Refreshes the running activities (after an intake or "Später").
+    /// `preferServer`: ask GET /v1/live-activity first (the server already
+    /// knows a synced intake), else build from the local stores.
+    func updateRunning(preferServer: Bool = false) async {
+        guard let current = runningActivities.first?.content.state else { return }
+        let state = await currentState(preferServer: preferServer, fallback: current)
+        await update(with: state)
     }
 
-    // MARK: - Snooze ("Später")
+    // MARK: - Snooze ("Später", keyed by medication name)
 
-    func snooze(_ medicationID: String, minutes: Int) {
+    func snooze(_ name: String, minutes: Int) {
         var map = snoozeMap
-        map[medicationID] = Date().addingTimeInterval(TimeInterval(minutes * 60)).timeIntervalSince1970
+        map[name.lowercased()] = Date().addingTimeInterval(TimeInterval(minutes * 60)).timeIntervalSince1970
         UserDefaults.standard.set(map, forKey: Self.snoozeKey)
     }
 
-    func clearSnooze(_ medicationID: String) {
+    func clearSnooze(_ name: String) {
         var map = snoozeMap
-        map[medicationID] = nil
+        map[name.lowercased()] = nil
         UserDefaults.standard.set(map, forKey: Self.snoozeKey)
     }
 
@@ -188,18 +200,17 @@ final class LiveActivityController: ObservableObject {
         return raw.filter { $0.value > now }
     }
 
-    // MARK: - Start / end
+    // MARK: - Start / update / end
 
     private var runningActivities: [BIOSActivity] {
         BIOSActivity.activities.filter { $0.activityState == .active || $0.activityState == .stale }
     }
 
-    private func start() {
-        let state = localState(current: nil)
+    private func start(with state: BIOSActivityState) {
         do {
             let activity = try BIOSActivity.request(
                 attributes: BIOSActivityAttributes(),
-                content: ActivityContent(state: state, staleDate: Self.staleDate()),
+                content: content(state),
                 pushType: .token
             )
             Self.log.info("Local Live Activity started \(activity.id, privacy: .public)")
@@ -208,6 +219,12 @@ final class LiveActivityController: ObservableObject {
             Self.log.error("Live Activity start failed: \(error.localizedDescription, privacy: .public)")
         }
         refreshRunning()
+    }
+
+    private func update(with state: BIOSActivityState) async {
+        for activity in runningActivities {
+            await activity.update(content(state))
+        }
     }
 
     private func endAll() async {
@@ -219,9 +236,7 @@ final class LiveActivityController: ObservableObject {
     }
 
     private func enabledChanged() async {
-        if let token = pushToStartToken {
-            await upload(kind: "push_to_start", token: token, activityID: nil)
-        }
+        await syncStartToken()
         if isEnabled {
             await appBecameActive()
         } else {
@@ -231,6 +246,17 @@ final class LiveActivityController: ObservableObject {
 
     private func refreshRunning() {
         isRunning = !runningActivities.isEmpty
+    }
+
+    /// Same staleness and relevance as the server's pushes.
+    private func content(_ state: BIOSActivityState) -> ActivityContent<BIOSActivityState> {
+        let relevance: Double
+        switch state.mode {
+        case .infection: relevance = 100
+        case .temperature: relevance = 90
+        case .normal: relevance = 50
+        }
+        return ActivityContent(state: state, staleDate: Date().addingTimeInterval(2 * 3600), relevanceScore: relevance)
     }
 
     // MARK: - Tokens
@@ -244,7 +270,7 @@ final class LiveActivityController: ObservableObject {
                 let token = Self.hex(data)
                 self.activityTokens[id] = token
                 Self.log.info("Activity token \(String(token.prefix(8)), privacy: .public)... for \(id, privacy: .public)")
-                await self.upload(kind: "update", token: token, activityID: id)
+                await self.post(kind: "update", token: token, activityID: id)
             }
         }
         Task { @MainActor in
@@ -260,40 +286,42 @@ final class LiveActivityController: ObservableObject {
 
     private func activityEnded(_ id: String) async {
         guard let token = activityTokens.removeValue(forKey: id) else { return }
-        await upload(kind: "update", token: token, activityID: id, ended: true)
+        await delete(token)
     }
 
-    private func retryUploads() async {
-        if let token = pushToStartToken {
-            await upload(kind: "push_to_start", token: token, activityID: nil)
+    /// Push-to-start token: registered while the toggle is on, removed when off.
+    private func syncStartToken() async {
+        guard let token = pushToStartToken else { return }
+        if isEnabled {
+            done.remove("DELETE|\(token)")
+            await post(kind: "start", token: token, activityID: nil)
+        } else {
+            done.remove("POST|start|\(token)")
+            await delete(token)
         }
+    }
+
+    private func retryTokens() async {
+        await syncStartToken()
         for (id, token) in activityTokens {
-            await upload(kind: "update", token: token, activityID: id)
+            await post(kind: "update", token: token, activityID: id)
         }
     }
 
-    private func upload(kind: String, token: String, activityID: String?, ended: Bool = false) async {
-        let key = [kind, token, String(isEnabled), String(ended)].joined(separator: "|")
-        if uploaded.contains(key) { return }
+    private func post(kind: String, token: String, activityID: String?) async {
+        let key = "POST|\(kind)|\(token)"
+        if done.contains(key) { return }
         guard let client = APIClient.fromConfig() else {
             tokenStatus = .notConfigured
             return
         }
         let body = LiveActivityTokenBody(
-            kind: kind,
-            token: token,
-            activityID: activityID,
-            environment: AppConfig.apnsEnvironment,
-            bundleID: AppConfig.bundleID,
-            attributesType: Self.attributesType,
-            enabled: isEnabled,
-            ended: ended,
-            appVersion: AppConfig.versionString
+            token: token, kind: kind, activityID: activityID, environment: AppConfig.apnsEnvironment
         )
         tokenStatus = .uploading
         do {
             try await client.registerLiveActivityToken(body)
-            uploaded.insert(key)
+            done.insert(key)
             tokenStatus = .succeeded(Date())
         } catch {
             if ErrorKind.isCancellation(error) { return }
@@ -302,39 +330,94 @@ final class LiveActivityController: ObservableObject {
         }
     }
 
-    // MARK: - Local content
+    private func delete(_ token: String) async {
+        let key = "DELETE|\(token)"
+        if done.contains(key) { return }
+        guard let client = APIClient.fromConfig() else { return }
+        do {
+            try await client.deleteLiveActivityToken(token)
+            done.insert(key)
+        } catch {
+            Self.log.error("Live Activity token delete failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
 
-    /// State from the cached dashboard and the plan stores. Fields the local
-    /// data does not know keep the value of `current` (e.g. pushed by the server).
+    // MARK: - Content
+
+    /// Server state (GET /v1/live-activity) or the local one, with the local
+    /// "Später" and the plan item id applied.
+    private func currentState(preferServer: Bool, fallback: BIOSActivityState?) async -> BIOSActivityState {
+        var state: BIOSActivityState?
+        if preferServer, let client = APIClient.fromConfig() {
+            do {
+                state = try await client.fetchLiveActivityState()
+            } catch {
+                if !ErrorKind.isCancellation(error) {
+                    Self.log.info("GET /v1/live-activity failed, using local data: \(error.localizedDescription, privacy: .public)")
+                }
+            }
+        }
+        var result = state ?? localState(current: fallback)
+        applyLocalOverlay(&result)
+        return result
+    }
+
+    /// Plan item id for "Genommen" and a pending "Später" time.
+    private func applyLocalOverlay(_ state: inout BIOSActivityState) {
+        guard var next = state.nextMedication, let name = next.name else { return }
+        let today = EventStore.dayString(Date())
+        if next.id == nil {
+            next.id = MedicationPlanStore.shared.activeItems(on: today)
+                .first { $0.name.caseInsensitiveCompare(name) == .orderedSame }?.serverID
+        }
+        if let until = snoozeMap[name.lowercased()] {
+            next.time = BIOSFormat.time(Date(timeIntervalSince1970: until))
+            next.later = true
+            next.overdue = false
+        }
+        state.nextMedication = next
+    }
+
+    /// Offline: the same fields from the cached dashboard and the plan stores
+    /// (rules as in the contract). Unknown fields keep `current`.
     func localState(current: BIOSActivityState?, now: Date = Date()) -> BIOSActivityState {
         var state = BIOSActivityState()
         let today = EventStore.dayString(now)
         let json = DiskCache.load("dashboard")?.value
 
-        // Gesundheits-Score (dashboard `health`, optional).
+        // Gesundheits-Score (dashboard `health`).
         if let health = json?.obj("health") {
             state.healthScore = (health.double("score") ?? health.double("value")).map { Int($0.rounded()) }
             state.healthLevel = health.str("level") ?? health.str("level_text")
-            var pillars: [String: Double] = [:]
+            var pillars = [Double?](repeating: nil, count: BIOSActivityColors.pillars.count)
             for pillar in health.list("pillars") {
                 guard let key = pillar.str("key") ?? pillar.str("id"),
                       let score = pillar.double("score") ?? pillar.double("value") else { continue }
-                pillars[BIOSActivityColors.pillarKey(key, label: pillar.str("label"))] = score
+                let canonical = BIOSActivityColors.pillarKey(key, label: pillar.str("label"))
+                if let index = BIOSActivityColors.pillars.firstIndex(where: { $0.key == canonical }) {
+                    pillars[index] = score
+                }
             }
-            state.pillars = pillars.isEmpty ? nil : pillars
+            state.pillarsMini = pillars.contains { $0 != nil } ? pillars : nil
         }
         if state.healthScore == nil, let current {
             state.healthScore = current.healthScore
             state.healthLevel = current.healthLevel
-            state.pillars = current.pillars
+            state.pillarsMini = current.pillarsMini
         }
 
-        // Infection episode.
+        // Infection: Whoop alarm infekt / infekt_frueh.
         let infection = json?.obj("infection").map { InfectionModel(json: $0) }
-        let infectionActive = infection.map { $0.kind.lowercased().hasPrefix("infekt") && $0.status != .ok } ?? false
+        let infectionKinds = ["infekt", "infekt_frueh"]
+        var infectionActive = false
         if let infection {
             state.infectionScore = infection.score.map { Int($0.rounded()) }
             state.infectionDay = infection.episodeDay
+            let kinds = [infection.kind] + infection.alerts.map(\.kind)
+            if let kind = kinds.first(where: { infectionKinds.contains($0.lowercased()) }) {
+                state.infectionKind = kind.lowercased()
+                infectionActive = true
+            }
         }
 
         // Temperature: newest of the local log and the dashboard `vitals`.
@@ -349,103 +432,105 @@ final class LiveActivityController: ObservableObject {
            at > (temperature?.at ?? .distantPast) {
             temperature = (value, at)
         }
-        let temperatureActive: Bool
-        if let temperature, now.timeIntervalSince(temperature.at) < 12 * 3600, temperature.value >= 37.5 {
-            temperatureActive = true
+        var temperatureHigh = false
+        if let temperature, now.timeIntervalSince(temperature.at) < 24 * 3600 {
             state.temperature = temperature.value
-            state.temperatureTime = BIOSFormat.time(temperature.at)
-            state.temperatureLabel = temperature.value >= 38.0 ? "Fieber" : "Erhöht"
-        } else {
-            temperatureActive = false
+            state.temperatureAt = Self.iso(temperature.at)
+            temperatureHigh = temperature.value >= 37.5 && now.timeIntervalSince(temperature.at) < 12 * 3600
         }
+        state.temperatureHigh = temperatureHigh
 
-        if infectionActive {
-            state.mode = .infection
-            state.status = infection?.status == .warn ? "warn" : "info"
-        } else if temperatureActive {
+        if temperatureHigh {
             state.mode = .temperature
-            state.status = "info"
+        } else if infectionActive {
+            state.mode = .infection
         } else {
             state.mode = .normal
-            state.status = "ok"
         }
 
-        // Next intake of the medication plan (first time not yet covered).
+        // Next intake: first open plan time today (per item the first `taken` times are done).
         let plan = MedicationPlanStore.shared
-        let items = plan.activeItems(on: today).filter { $0.serverID != nil }
+        let items = plan.activeItems(on: today)
         if items.isEmpty, let current {
             state.nextMedication = current.nextMedication
-            state.nextMedicationID = current.nextMedicationID
-            state.nextTime = current.nextTime
-            state.nextLabel = current.nextLabel
         } else {
-            let snoozed = snoozeMap
-            var best: (time: String, item: MedicationPlanItem, later: Bool)?
+            let clock = BIOSFormat.time(now)
+            var best: (time: String, item: MedicationPlanItem)?
             for item in items {
                 let times = item.times.sorted()
                 let taken = plan.taken(item, on: today)
-                guard taken < times.count, let id = item.serverID else { continue }
-                var time = times[taken]
-                var later = false
-                if let until = snoozed[id] {
-                    time = BIOSFormat.time(Date(timeIntervalSince1970: until))
-                    later = true
-                }
-                if best == nil || time < best!.time {
-                    best = (time, item, later)
+                guard taken < times.count else { continue }
+                let time = times[taken]
+                if best.map({ time < $0.time }) ?? true {
+                    best = (time, item)
                 }
             }
             if let best {
-                state.nextMedication = best.item.name
-                state.nextMedicationID = best.item.serverID
-                state.nextTime = best.time
-                state.nextLabel = best.later ? "Später" : nil
+                state.nextMedication = BIOSActivityState.NextMedication(
+                    name: best.item.name, time: best.time, overdue: best.time < clock, id: best.item.serverID
+                )
             }
         }
 
         // Supplements today.
         let supplements = SupplementStore.shared.takenCount(on: today)
         if supplements.total > 0 {
-            state.supplementsTaken = supplements.taken
-            state.supplementsTotal = supplements.total
+            state.supplements = BIOSActivityState.Supplements(taken: supplements.taken, total: supplements.total)
         } else if let current {
-            state.supplementsTaken = current.supplementsTaken
-            state.supplementsTotal = current.supplementsTotal
+            state.supplements = current.supplements
         }
 
-        state.updatedAt = now.timeIntervalSince1970
+        state.updatedAt = Self.iso(now)
         return state
     }
 
     // MARK: - Helpers
 
     static func isNight(_ date: Date = Date()) -> Bool {
-        let hour = Calendar.current.component(.hour, from: date)
-        return hour >= nightStartHour || hour < morningHour
-    }
-
-    /// Content is stale from 22:00 (the app or the server ends it then).
-    static func staleDate(_ now: Date = Date()) -> Date? {
-        Calendar.current.date(bySettingHour: nightStartHour, minute: 0, second: 0, of: now)
+        let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
+        let minute = (parts.hour ?? 0) * 60 + (parts.minute ?? 0)
+        return minute >= nightStartMinute || minute < morningMinute
     }
 
     static func hex(_ data: Data) -> String {
         data.map { String(format: "%02x", $0) }.joined()
     }
+
+    private static func iso(_ date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        formatter.timeZone = TimeZone.current
+        return formatter.string(from: date)
+    }
 }
 
 /// App implementation of the Live Activity buttons (Shared/LiveActivityIntents.swift).
 enum LiveActivityActions {
+    /// "Genommen": one intake of the plan item (by id, else by name) through
+    /// the offline-safe store, then the banner shows the next intake.
     @MainActor
-    static func taken(medicationID: String, name: String) async {
-        _ = await LogIntentRunner.medication(id: medicationID, name: name)
-        LiveActivityController.shared.clearSnooze(medicationID)
-        await LiveActivityController.shared.updateRunning()
+    static func taken(medicationID: String?, name: String) async {
+        let plan = MedicationPlanStore.shared
+        if plan.allItems.isEmpty {
+            await plan.refresh()
+        }
+        let active = plan.activeItems(on: EventStore.dayString(Date()))
+        let item = active.first { medicationID != nil && $0.serverID == medicationID }
+            ?? active.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+        guard let item else {
+            Logger(subsystem: "at.bene.bios", category: "liveactivity")
+                .error("Genommen: no plan item for the banner's medication")
+            return
+        }
+        let outcome = await plan.log(item)
+        LiveActivityController.shared.clearSnooze(name)
+        await LiveActivityController.shared.updateRunning(preferServer: outcome == .synced)
     }
 
+    /// "Später": moves the shown intake by `minutes` (local only).
     @MainActor
-    static func later(medicationID: String, minutes: Int) async {
-        LiveActivityController.shared.snooze(medicationID, minutes: minutes)
+    static func later(medicationID: String?, name: String, minutes: Int) async {
+        LiveActivityController.shared.snooze(name, minutes: minutes)
         await LiveActivityController.shared.updateRunning()
     }
 }

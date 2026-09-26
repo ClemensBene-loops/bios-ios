@@ -9,20 +9,22 @@ import Foundation
 // one in BIOS/App/LiveActivityController.swift, a no-op in BIOSWidgets.
 // Not discoverable: they only make sense from the banner, not in Shortcuts.
 
-/// "Genommen": logs one intake of the plan item shown in the banner.
+/// "Genommen": logs one intake of the plan item shown in the banner. The
+/// server's content state names the medication only; the app resolves the
+/// plan item by id (local activity) or by name.
 struct LiveActivityTakenIntent: LiveActivityIntent {
     static let title: LocalizedStringResource = "Einnahme bestätigen"
     static let isDiscoverable = false
 
     @Parameter(title: "Plan-ID")
-    var medicationID: String
+    var medicationID: String?
 
     @Parameter(title: "Medikament")
     var medicationName: String
 
     init() {}
 
-    init(medicationID: String, medicationName: String) {
+    init(medicationID: String?, medicationName: String) {
         self.medicationID = medicationID
         self.medicationName = medicationName
     }
@@ -39,16 +41,20 @@ struct LiveActivityLaterIntent: LiveActivityIntent {
     static let isDiscoverable = false
 
     @Parameter(title: "Plan-ID")
-    var medicationID: String
+    var medicationID: String?
+
+    @Parameter(title: "Medikament")
+    var medicationName: String
 
     init() {}
 
-    init(medicationID: String) {
+    init(medicationID: String?, medicationName: String) {
         self.medicationID = medicationID
+        self.medicationName = medicationName
     }
 
     func perform() async throws -> some IntentResult {
-        await LiveActivityActions.later(medicationID: medicationID, minutes: 30)
+        await LiveActivityActions.later(medicationID: medicationID, name: medicationName, minutes: 30)
         return .result()
     }
 }

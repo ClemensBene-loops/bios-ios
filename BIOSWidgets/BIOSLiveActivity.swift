@@ -26,7 +26,7 @@ struct BIOSLiveActivity: Widget {
                         Text(state.nextTime ?? "–")
                             .font(.system(size: 22, weight: .semibold))
                             .monospacedDigit()
-                        Text(state.nextMedication == nil ? "Einnahmen" : (state.nextLabel ?? "Nächste"))
+                        Text(state.hasNextMedication ? "Nächste" : "Einnahmen")
                             .font(.system(size: 10))
                             .foregroundStyle(BIOSActivityColors.text2)
                     }
@@ -105,13 +105,12 @@ private struct InfoColumn: View {
         VStack(alignment: .leading, spacing: 2) {
             switch state.mode {
             case .normal:
-                contextLine(state.nextMedication == nil ? "Einnahmen" : (state.nextLabel ?? "Nächste Einnahme"),
-                            color: BIOSActivityColors.text2)
+                contextLine(state.nextLabel, color: state.nextMedication?.overdue == true ? BIOSActivityColors.attention : BIOSActivityColors.text2)
                 Text(state.medicationText)
                     .font(.system(size: 16, weight: .semibold))
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
-                if let time = state.nextTime, state.nextMedication != nil {
+                if let time = state.nextTime, state.hasNextMedication {
                     Text(time)
                         .font(.system(size: 26, weight: .semibold))
                         .monospacedDigit()
@@ -130,7 +129,7 @@ private struct InfoColumn: View {
                         .font(.system(size: 26, weight: .semibold))
                         .monospacedDigit()
                     Spacer(minLength: 4)
-                    Text("! " + (state.temperatureLabel ?? "Erhöht"))
+                    Text("! " + state.temperatureLabel)
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(BIOSActivityColors.attention)
                 }
@@ -168,10 +167,11 @@ private struct InfoColumn: View {
                 .foregroundStyle(BIOSActivityColors.text2)
                 .lineLimit(1)
             Spacer(minLength: 4)
-            if state.nextMedication != nil, let time = state.nextTime {
+            if state.hasNextMedication, let time = state.nextTime {
                 Text(time)
                     .font(.system(size: 14, weight: .semibold))
                     .monospacedDigit()
+                    .foregroundStyle(state.nextMedication?.overdue == true ? BIOSActivityColors.attention : BIOSActivityColors.cream)
             }
         }
     }
@@ -204,7 +204,7 @@ struct HealthRingView: View {
             ForEach(Array(BIOSActivityColors.pillars.enumerated()), id: \.offset) { index, pillar in
                 let start = Double(index) * Self.slot + Self.gap / 2
                 let length = Self.slot - Self.gap
-                let fraction = min(max((state.pillars?[pillar.key] ?? 0) / 100, 0), 1)
+                let fraction = min(max((state.pillar(index) ?? 0) / 100, 0), 1)
                 Circle()
                     .trim(from: start, to: start + length)
                     .stroke(pillar.color.opacity(0.18), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
@@ -324,7 +324,7 @@ private struct ExpandedHeadline: View {
         VStack(spacing: 1) {
             switch state.mode {
             case .normal:
-                Text(state.nextMedication == nil ? "Einnahmen" : (state.nextLabel ?? "Nächste Einnahme"))
+                Text(state.nextLabel)
                     .font(.system(size: 11))
                     .foregroundStyle(BIOSActivityColors.text2)
                 Text(state.medicationText)
@@ -339,7 +339,7 @@ private struct ExpandedHeadline: View {
                 Text("Temperatur" + (state.temperatureTime.map { " · \($0)" } ?? ""))
                     .font(.system(size: 11))
                     .foregroundStyle(BIOSActivityColors.text2)
-                Text((state.temperatureText ?? "–") + " · " + (state.temperatureLabel ?? "Erhöht"))
+                Text((state.temperatureText ?? "–") + " · " + state.temperatureLabel)
                     .font(.system(size: 16, weight: .semibold))
             }
         }
@@ -362,7 +362,7 @@ private struct ExpandedActions: View {
                         .font(.system(size: 12))
                         .foregroundStyle(BIOSActivityColors.text2)
                     Spacer(minLength: 4)
-                    if state.nextMedication != nil, let time = state.nextTime {
+                    if state.hasNextMedication, let time = state.nextTime {
                         Text(time)
                             .font(.system(size: 14, weight: .semibold))
                             .monospacedDigit()
@@ -370,13 +370,14 @@ private struct ExpandedActions: View {
                 }
             }
             HStack(spacing: 8) {
-                if let id = state.nextMedicationID, let name = state.nextMedication {
+                if let name = state.nextMedication?.name {
+                    let id = state.nextMedication?.id
                     Button(intent: LiveActivityTakenIntent(medicationID: id, medicationName: name)) {
                         Label("Genommen", systemImage: "checkmark")
                             .font(.system(size: 13, weight: .semibold))
                     }
                     .tint(BIOSActivityColors.positive)
-                    Button(intent: LiveActivityLaterIntent(medicationID: id)) {
+                    Button(intent: LiveActivityLaterIntent(medicationID: id, medicationName: name)) {
                         Label("Später", systemImage: "clock")
                             .font(.system(size: 13, weight: .semibold))
                     }
@@ -412,19 +413,18 @@ extension BIOSActivityState {
     static var previewInfection: BIOSActivityState {
         var state = BIOSActivityState.preview
         state.mode = .infection
-        state.status = "info"
         state.infectionScore = 69
         state.infectionDay = 4
+        state.infectionKind = "infekt"
         return state
     }
 
     static var previewTemperature: BIOSActivityState {
         var state = BIOSActivityState.preview
         state.mode = .temperature
-        state.status = "info"
         state.temperature = 37.8
-        state.temperatureTime = "08:05"
-        state.temperatureLabel = "Erhöht"
+        state.temperatureAt = "2026-01-01T08:05:00+01:00"
+        state.temperatureHigh = true
         return state
     }
 }
