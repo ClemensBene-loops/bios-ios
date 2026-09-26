@@ -11,13 +11,18 @@ struct BIOSApp: App {
         WindowGroup {
             // Dark mode is fixed app-wide by UIUserInterfaceStyle = Dark in
             // Info.plist (applies from launch, also to system sheets).
-            RootView(
-                state: AppState.shared,
-                router: Router.shared,
-                dashboardStore: DashboardStore.shared,
-                seriesStore: SeriesStore.shared,
-                eventStore: EventStore.shared
-            )
+            // Cold start: the brand splash (Brand.swift) sits on top of the
+            // TabView for about 1.7 s; RootView is built at once underneath,
+            // so its data loading runs in parallel and is never delayed.
+            SplashContainer {
+                RootView(
+                    state: AppState.shared,
+                    router: Router.shared,
+                    dashboardStore: DashboardStore.shared,
+                    seriesStore: SeriesStore.shared,
+                    eventStore: EventStore.shared
+                )
+            }
             .onChange(of: scenePhase) { _, newPhase in
                 if newPhase == .active {
                     appDelegate.refreshAuthorizationIfNeeded()

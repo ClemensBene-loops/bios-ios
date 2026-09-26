@@ -132,6 +132,7 @@ struct MehrView: View {
             }
 
             Section {
+                BrandRow()
                 LabeledContent("Version", value: AppConfig.versionString)
                 LabeledContent("Push-Umgebung", value: AppConfig.apnsEnvironment == "sandbox" ? "APNs Sandbox" : "APNs Production")
                 LabeledContent("Server", value: AppConfig.isServerConfigured ? "konfiguriert" : "nicht konfiguriert")

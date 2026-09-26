@@ -119,7 +119,7 @@ failing. There is no URL scheme; deep links come only from pushes.
   `UmweltView`, `MehrView`, `Details/`, `Charts/`, `QuickLogViews`, `AlcoholViews`,
   `BloodPressureViews`, `Theme`, `Components`.
 - `BIOS/Config/AppConfig.swift`: reads the build-time config from Info.plist.
-- `BIOS/Assets.xcassets`: app icon (rendered by `tools/make_icon.py`, preview in `docs/icon-preview.png`).
+- `BIOS/Assets.xcassets`: "Seed" app icon, splash mark `BIOSMark` and `LaunchBackground` color (prepared from `docs/brand/bios-seed.png` by `tools/make_icon.py`, preview in `docs/icon-preview.png`; wordmark SVGs in `docs/brand`, drawn in code in `BIOS/Views/Brand.swift`).
 - `Config/`: `Info.plist`, `BIOS.entitlements` (`aps-environment`), xcconfigs
   (`Base` = team + automatic signing for local builds, `Debug` = `APS_ENVIRONMENT=development`,
   `Release` = `production`, optional git-ignored `Local.xcconfig`).
