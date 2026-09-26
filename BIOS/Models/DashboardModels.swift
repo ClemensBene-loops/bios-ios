@@ -407,6 +407,27 @@ struct InfectionModel {
     }
 }
 
+extension InfectionModel {
+    /// The one color mapping of the Infekt-Check (Heute card pill, hero,
+    /// detail, chips), as a BIOSStatus so `.tint`, `.glow` and `.symbol` apply:
+    /// - `.warn` (red): an active `infekt` alarm or Infekt-Score level high.
+    /// - `.info` (yellow): `infekt_frueh`, score level medium, or any other
+    ///   server warn/info (e.g. `recovery_rot`, `schlaf`: warn without an
+    ///   infection pattern stays yellow).
+    /// - `.ok` (green): nothing of the above and server status ok.
+    /// - `.unknown` (grey): not evaluable, no data.
+    var tone: BIOSStatus {
+        let kinds = Set(alerts.map { $0.kind.lowercased() } + [kind.lowercased()])
+        if kinds.contains("infekt") || (score != nil && scoreLevel == .high) { return .warn }
+        if kinds.contains("infekt_frueh") || (score != nil && scoreLevel == .medium) { return .info }
+        switch status {
+        case .warn, .info: return .info
+        case .ok: return .ok
+        case .unknown: return .unknown
+        }
+    }
+}
+
 // MARK: - Outlook card
 
 struct OutlookCardModel {

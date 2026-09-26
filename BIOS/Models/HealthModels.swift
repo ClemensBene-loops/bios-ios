@@ -109,11 +109,13 @@ struct HealthModel {
         if score == nil, pillars.isEmpty { return nil }
     }
 
-    /// Level word ("gut") and its color: server word, else from the score.
+    /// Level word ("gut") and its color: server word, else from the score
+    /// with the server's thresholds (80 sehr gut, 65 gut, 50 mittel).
     var levelWord: String {
         if let level { return level }
         guard let score else { return "n. b." }
-        if score >= 70 { return "gut" }
+        if score >= 80 { return "sehr gut" }
+        if score >= 65 { return "gut" }
         if score >= 50 { return "mittel" }
         return "niedrig"
     }

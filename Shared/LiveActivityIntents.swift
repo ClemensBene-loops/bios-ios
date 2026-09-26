@@ -10,8 +10,9 @@ import Foundation
 // Not discoverable: they only make sense from the banner, not in Shortcuts.
 
 /// "Genommen": logs one intake of the plan item shown in the banner. The
-/// server's content state names the medication only; the app resolves the
-/// plan item by id (local activity) or by name.
+/// content state carries the plan item id (`next_medication.id`, server and
+/// local activity); the app resolves by id, by name only as a fallback for
+/// older servers without the id.
 struct LiveActivityTakenIntent: LiveActivityIntent {
     static let title: LocalizedStringResource = "Einnahme bestätigen"
     static let isDiscoverable = false

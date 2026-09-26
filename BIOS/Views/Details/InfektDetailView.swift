@@ -53,7 +53,8 @@ struct InfektSummaryCard: View {
     let infection: InfectionModel?
 
     var body: some View {
-        let status = infection?.status ?? .unknown
+        // One color mapping for card, hero and detail (InfectionModel.tone).
+        let status = infection?.tone ?? .unknown
         let zone = infection?.recoveryZone ?? .none
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 14) {

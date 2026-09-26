@@ -140,14 +140,14 @@ struct InfektCheckCompactCard: View {
     let vitals: DashboardVitalsModel?
 
     var body: some View {
-        let status = infection?.status ?? .unknown
+        let tone = infection?.tone ?? .unknown
         NavigationLink(value: DetailRoute.infekt) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     Text("Infekt-Check")
                         .font(.title3.bold())
                     Spacer()
-                    StatusPill(status: status, text: pillText(infection))
+                    StatusPill(tone: tone, text: pillText(infection))
                 }
                 HStack(alignment: .center, spacing: 12) {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -163,7 +163,7 @@ struct InfektCheckCompactCard: View {
                     SeriesReader(request: SeriesStore.Request(metric: MetricKind.infectionScore.metric, days: 14, source: nil)) { entry in
                         let values = (entry?.model?.points ?? []).map(\.value)
                         if values.compactMap({ $0 }).count >= 2 {
-                            ScoreSparkline(values: values, color: status == .warn ? BIOSTheme.mid : BIOSTheme.text2)
+                            ScoreSparkline(values: values, color: tone == .warn || tone == .info ? tone.tint : BIOSTheme.text2)
                                 .frame(width: 140, height: 34)
                                 .accessibilityHidden(true)
                         }
@@ -186,9 +186,9 @@ struct InfektCheckCompactCard: View {
 
     private func pillText(_ infection: InfectionModel?) -> String {
         guard let infection else { return "keine Daten" }
-        switch infection.status {
+        switch infection.tone {
         case .warn: return "Auffällig"
-        case .info: return "Hinweis"
+        case .info: return infection.status == .warn ? "Auffällig" : "Hinweis"
         case .ok: return "Im Rahmen"
         case .unknown: return "nicht bewertbar"
         }
@@ -221,21 +221,31 @@ struct InfektCheckCompactCard: View {
     }
 }
 
+/// Status pill of the Infekt-Check. `tone` is `InfectionModel.tone` (one
+/// color mapping for card, hero and detail): red / yellow / green / grey.
 struct StatusPill: View {
-    let status: BIOSStatus
+    let tone: BIOSStatus
     let text: String
 
     var body: some View {
         HStack(spacing: 4) {
-            Image(systemName: status == .warn ? "exclamationmark" : status.symbol)
+            Image(systemName: tone == .warn || tone == .info ? "exclamationmark" : tone.symbol)
                 .font(.caption.weight(.bold))
             Text(text)
                 .font(.subheadline.weight(.semibold))
         }
-        .foregroundStyle(status == .warn ? BIOSTheme.midText : status.tint)
+        .foregroundStyle(textColor)
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .background((status == .warn ? BIOSTheme.mid : status.tint).opacity(0.16), in: Capsule())
+        .background(tone.tint.opacity(0.16), in: Capsule())
+    }
+
+    private var textColor: Color {
+        switch tone {
+        case .warn: return BIOSTheme.badText
+        case .info: return BIOSTheme.midText
+        case .ok, .unknown: return tone.tint
+        }
     }
 }
 

@@ -46,7 +46,8 @@ struct BIOSActivityState: Codable, Hashable, Sendable {
         /// "HH:MM"
         var time: String?
         var overdue: Bool?
-        /// App only: plan item id for "Genommen" (the server sends the name).
+        /// Plan item id for "Genommen" (server `next_medication.id` since BIOS
+        /// N1c; older servers send only the name, then the app fills it by name).
         var id: String?
         /// App only: moved with "Später".
         var later: Bool?
@@ -210,11 +211,13 @@ extension BIOSActivityState {
         healthScore.map { String(min(max($0, 0), 100)) } ?? "–"
     }
 
-    /// Level word: server word, else from the score.
+    /// Level word: server word, else from the score with the server's
+    /// thresholds (80 sehr gut, 65 gut, 50 mittel, below niedrig).
     var healthLevelText: String {
         if let healthLevel { return healthLevel }
         guard let healthScore else { return "n. b." }
-        if healthScore >= 70 { return "gut" }
+        if healthScore >= 80 { return "sehr gut" }
+        if healthScore >= 65 { return "gut" }
         if healthScore >= 50 { return "mittel" }
         return "niedrig"
     }

@@ -19,7 +19,8 @@ struct HeroCard: View {
 
     @ViewBuilder
     private var content: some View {
-        let status = infection?.status ?? .unknown
+        // One color mapping for card, hero and detail (InfectionModel.tone).
+        let status = infection?.tone ?? .unknown
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 EyebrowText(text: "Infekt-Check")

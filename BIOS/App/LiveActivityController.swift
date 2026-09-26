@@ -378,7 +378,8 @@ final class LiveActivityController: ObservableObject {
         return result
     }
 
-    /// Plan item id for "Genommen" and a pending "Später" time.
+    /// Plan item id for "Genommen" (only when the server sent none, e.g. an
+    /// older server: resolved by name) and a pending "Später" time.
     private func applyLocalOverlay(_ state: inout BIOSActivityState) {
         guard var next = state.nextMedication, let name = next.name else { return }
         let today = EventStore.dayString(Date())
