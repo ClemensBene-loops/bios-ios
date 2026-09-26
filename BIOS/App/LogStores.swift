@@ -77,25 +77,27 @@ struct SupplementItem: Identifiable, Codable, Equatable {
         note = json.str("note")
     }
 
+    /// PUT body entry (API v1): missing fields are omitted, so the server keeps
+    /// ids and start dates of known items; `per_day` is an integer 1...10.
     var json: JSONValue {
-        func text(_ value: String?) -> JSONValue {
-            guard let value, !value.trimmingCharacters(in: .whitespaces).isEmpty else { return .null }
-            return .string(value)
+        func add(_ key: String, _ value: String?, into object: inout [String: JSONValue]) {
+            guard let value else { return }
+            let trimmed = value.trimmingCharacters(in: .whitespaces)
+            if !trimmed.isEmpty { object[key] = .string(trimmed) }
         }
-        func number(_ value: Double?) -> JSONValue {
-            value.map { JSONValue.number($0) } ?? JSONValue.null
+        var object: [String: JSONValue] = ["name": .string(name.trimmingCharacters(in: .whitespaces))]
+        add("id", serverID, into: &object)
+        add("brand", brand, into: &object)
+        add("unit", unit, into: &object)
+        add("note", note, into: &object)
+        add("active_from", activeFrom.map { String($0.prefix(10)) }, into: &object)
+        add("active_to", activeTo.map { String($0.prefix(10)) }, into: &object)
+        if let amount, amount > 0 {
+            object["amount"] = .number(amount)
         }
-        var object: [String: JSONValue] = [
-            "name": .string(name),
-            "brand": text(brand),
-            "amount": number(amount),
-            "unit": text(unit),
-            "per_day": number(perDay),
-            "active_from": text(activeFrom),
-            "active_to": text(activeTo),
-            "note": text(note),
-        ]
-        object["id"] = serverID.map { JSONValue.string($0) } ?? JSONValue.null
+        if let perDay {
+            object["per_day"] = .number(Double(Swift.max(1, Swift.min(10, Int(perDay.rounded())))))
+        }
         return .object(object)
     }
 
@@ -206,7 +208,12 @@ final class SupplementStore: ObservableObject {
         return value
     }
 
+    /// Days without local changes use the server map (plan of that day);
+    /// otherwise the current plan with pending changes applied.
     func takenCount(on day: String) -> (taken: Int, total: Int) {
+        if !pending.contains(where: { $0.date == day }), let map = intake[day], !map.isEmpty {
+            return (map.values.filter { $0 }.count, map.count)
+        }
         let active = activeItems(on: day)
         return (active.filter { isTaken($0, on: day) }.count, active.count)
     }
@@ -286,8 +293,13 @@ final class SupplementStore: ObservableObject {
 
         while let change = pending.first {
             do {
-                try await client.postIntake(date: change.date, itemID: change.itemID, all: change.all, taken: change.taken)
-                apply(change)
+                let answer = try await client.postIntake(date: change.date, itemID: change.itemID, all: change.all, taken: change.taken)
+                if let day = answer?.obj("day"), let map = day.obj("items")?.objectValue {
+                    intake[change.date] = map.mapValues { $0.boolValue ?? false }
+                    LogQueue.save(intake, Self.intakeFile)
+                } else {
+                    apply(change)
+                }
                 pending.removeAll { $0.id == change.id }
                 LogQueue.save(pending, Self.queueFile)
             } catch {

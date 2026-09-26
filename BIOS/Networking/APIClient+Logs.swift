@@ -26,14 +26,15 @@ extension APIClient {
     }
 
     /// `POST /v1/intake`: one item (`item_id`) or all active items (`all`).
-    func postIntake(date: String, itemID: String?, all: Bool, taken: Bool) async throws {
+    @discardableResult
+    func postIntake(date: String, itemID: String?, all: Bool, taken: Bool) async throws -> JSONValue? {
         let body: JSONValue = .object([
             "date": .string(date),
             "item_id": itemID.map { JSONValue.string($0) } ?? JSONValue.null,
             "all": .bool(all),
             "taken": .bool(taken),
         ])
-        _ = try await requestJSON("POST", path: ["v1", "intake"], body: body)
+        return try await requestJSON("POST", path: ["v1", "intake"], body: body)
     }
 
     /// `GET /v1/intake?days=N`

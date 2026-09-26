@@ -473,8 +473,8 @@ struct SupplementItemForm: View {
                 TextField("Menge", text: $amountText)
                     .keyboardType(.decimalPad)
                 TextField("Einheit (mg, IE, Kapsel)", text: optional($item.unit))
-                TextField("Pro Tag", text: $perDayText)
-                    .keyboardType(.decimalPad)
+                TextField("Pro Tag (1 bis 10)", text: $perDayText)
+                    .keyboardType(.numberPad)
             } header: {
                 Text("Dosis")
             }
