@@ -165,6 +165,15 @@ struct SleepBreakdownCard: View {
                     .monospacedDigit()
                     .foregroundStyle(BIOSTheme.text2)
             }
+            if let baseline = sleep.baselineTotalH {
+                CaptionText(text: "Baseline gesamt \(BIOSFormat.number(baseline, digits: 1)) h")
+            }
+            if let afterWake = sleep.afterWakeText {
+                Label(afterWake + " (zählt zum nächsten Aufwachtag)", systemImage: "powersleep")
+                    .font(.footnote)
+                    .foregroundStyle(BIOSTheme.text3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .foregroundStyle(BIOSTheme.text1)
         .biosCard()

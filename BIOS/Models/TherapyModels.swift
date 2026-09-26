@@ -73,26 +73,64 @@ struct TherapyOverride: Identifiable {
     let symbol: String?
     let low: Double?
     let high: Double?
-    /// Insulin needs in percent (100 = unchanged).
-    let insulinPct: Double?
+    /// Insulin needs factor (1.5 = 150 %), nil = unchanged.
+    let factor: Double?
+    /// Minutes; nil = unbegrenzt.
     let durationMin: Double?
+    let indefinite: Bool
 
+    /// `{name, symbol, factor, target: [low, high] | null, duration: min | null, indefinite}`.
+    init?(json element: JSONValue, id: Int) {
+        guard let name = element.str("name") ?? element.str("title") else { return nil }
+        self.id = id
+        self.name = name
+        symbol = element.str("symbol")
+        let targetList = element.list("target").compactMap(\.finiteNumber)
+        let targetObject = element.obj("target")
+        low = targetList.first ?? targetObject?.double("low") ?? element.double("target_low")
+        high = (targetList.count > 1 ? targetList[1] : targetList.first)
+            ?? targetObject?.double("high") ?? element.double("target_high")
+        let pct = element.double("insulin_needs_pct") ?? element.double("percentage")
+        factor = element.double("factor") ?? element.double("insulin_needs") ?? element.double("scale")
+            ?? pct.map { $0 / 100 }
+        let minutes = element.double("duration") ?? element.double("duration_min")
+        durationMin = minutes
+        indefinite = element.flag("indefinite") || minutes == nil
+    }
+
+    private var factorText: String? {
+        guard let factor, abs(factor - 1) > 0.001 else { return nil }
+        let digits = (factor * 10).rounded() == factor * 10 ? 1 : 2
+        return "x\(BIOSFormat.number(factor, digits: digits))"
+    }
+
+    var durationText: String {
+        guard !indefinite, let durationMin, durationMin > 0 else { return "unbegrenzt" }
+        if durationMin >= 60 {
+            let hours = durationMin / 60
+            return "\(BIOSFormat.number(hours, digits: hours.rounded() == hours ? 0 : 1)) h"
+        }
+        return "\(BIOSFormat.number(durationMin)) min"
+    }
+
+    /// "x1,5 · 120 bis 140 mg/dL · unbegrenzt"
     var detailText: String {
         var parts: [String] = []
+        if let factorText { parts.append(factorText) }
         if let low, let high {
-            parts.append(low == high ? "\(BIOSFormat.number(low)) mg/dL" : "\(BIOSFormat.number(low)) bis \(BIOSFormat.number(high)) mg/dL")
+            parts.append(low == high
+                ? "\(BIOSFormat.number(low)) mg/dL"
+                : "\(BIOSFormat.number(low)) bis \(BIOSFormat.number(high)) mg/dL")
         }
-        if let insulinPct {
-            parts.append("Insulinbedarf \(BIOSFormat.number(insulinPct)) %")
-        }
-        if let durationMin, durationMin > 0 {
-            parts.append(durationMin >= 60
-                ? "\(BIOSFormat.number(durationMin / 60, digits: durationMin.truncatingRemainder(dividingBy: 60) == 0 ? 0 : 1)) h"
-                : "\(BIOSFormat.number(durationMin)) min")
-        } else if durationMin != nil {
-            parts.append("unbegrenzt")
-        }
+        parts.append(durationText)
         return parts.joined(separator: " · ")
+    }
+
+    /// "Krank x1,5, unbegrenzt"
+    var bannerText: String {
+        var text = [symbol, name].compactMap { $0 }.joined(separator: " ")
+        if let factorText { text += " " + factorText }
+        return text + ", " + durationText
     }
 }
 
@@ -101,6 +139,7 @@ struct DeliveredHour: Equatable {
     let hour: Int
     let mean: Double
     let n: Int?
+    var scheduled: Double? = nil
 }
 
 /// Basal assistant: per hour proposal plus the overall verdict.
@@ -126,7 +165,7 @@ struct TherapySuggestions {
         }
 
         var isLowConsistency: Bool {
-            if let consistency { return consistency < (consistency > 1 ? 50 : 0.5) }
+            if let consistency { return consistency < (consistency > 1 ? 70 : 0.7) }
             if let text = consistencyText?.lowercased() { return text.contains("niedrig") || text.contains("low") }
             return false
         }
@@ -139,6 +178,8 @@ struct TherapySuggestions {
     }
 
     let recommended: Bool
+    /// "Keine Änderung nötig": gate open, no robust change (neutral, not a warning).
+    let noChangeNeeded: Bool
     let statusText: String
     let reasons: [String]
     let disclaimer: String?
@@ -151,12 +192,15 @@ struct TherapySuggestions {
     let blocks: [TherapyScheduleEntry]
     let totalOld: Double?
     let totalNew: Double?
+    let totalChangePct: Double?
 
     init?(json: JSONValue?) {
         guard let json, json.objectValue != nil else { return nil }
         let status = (json.str("status") ?? "").lowercased()
         recommended = status == "recommended" || status == "empfohlen"
-        statusText = json.str("status_text") ?? (recommended ? "Zur Übernahme empfohlen" : "Nicht zur Übernahme empfohlen")
+        let text = json.str("status_text") ?? (recommended ? "Zur Übernahme empfohlen" : "Nicht zur Übernahme empfohlen")
+        statusText = text
+        noChangeNeeded = !recommended && text.lowercased().contains("keine änderung")
         reasons = TherapySuggestions.texts(json.list("reasons"))
         disclaimer = json.str("disclaimer")
         let window = json.obj("window")
@@ -168,7 +212,7 @@ struct TherapySuggestions {
                 excluded.append(ExcludedDay(date: date, reasons: []))
             } else if let date = element.str("date") ?? element.str("day") {
                 var reasons = TherapySuggestions.texts(element.list("reasons"))
-                if let reason = element.str("reason") { reasons.insert(reason, at: 0) }
+                if reasons.isEmpty, let reason = element.str("reason") { reasons = [reason] }
                 excluded.append(ExcludedDay(date: date, reasons: reasons))
             }
         }
@@ -208,6 +252,7 @@ struct TherapySuggestions {
         let totals = json.obj("totals")
         totalOld = totals?.double("old") ?? totals?.double("current") ?? json.double("total_old")
         totalNew = totals?.double("new") ?? totals?.double("proposed") ?? json.double("total_new")
+        totalChangePct = totals?.double("change_pct")
     }
 
     func hour(_ hour: Int) -> Hour? {
@@ -239,11 +284,19 @@ struct TherapyModel {
     let maxBasal: Double?
     let maxBolus: Double?
     let overrides: [TherapyOverride]
+    /// Running override (banner).
+    let activeOverride: TherapyOverride?
+    /// Planned U/h per hour (minute weighted, 24 values).
+    let basalHourly: [Double?]
+    let note: String?
+    let errors: [String]
     let delivered: [DeliveredHour]
     let deliveredDays: Int?
     let basalTotal: Double?
     let deliveredTotal: Double?
     let profileName: String?
+    /// "nightscout" or "db" (then without ratio, ISF, targets, limits).
+    let profileSource: String?
     let updatedAt: Date?
     let generatedAt: Date?
     let suggestions: TherapySuggestions?
@@ -277,20 +330,12 @@ struct TherapyModel {
         maxBasal = json.double("max_basal") ?? root.double("max_basal") ?? limits?.double("max_basal")
         maxBolus = json.double("max_bolus") ?? root.double("max_bolus") ?? limits?.double("max_bolus")
         var overrides: [TherapyOverride] = []
+        activeOverride = root.obj("active_override").flatMap { TherapyOverride(json: $0, id: 0) }
+        note = root.str("note")
+        errors = root.strings("errors")
+        basalHourly = root.list("basal_hourly").map(\.finiteNumber)
         for element in firstList(["overrides", "override_presets", "presets"]) {
-            guard let name = element.str("name") ?? element.str("title") else { continue }
-            let target = element.obj("target")
-            let scale = element.double("insulin_needs_pct") ?? element.double("insulin_needs")
-                ?? element.double("percentage") ?? element.double("scale")
-            overrides.append(TherapyOverride(
-                id: overrides.count,
-                name: name,
-                symbol: element.str("symbol"),
-                low: element.double("target_low") ?? target?.double("low") ?? element.double("low"),
-                high: element.double("target_high") ?? target?.double("high") ?? element.double("high"),
-                insulinPct: scale.map { $0 <= 3 ? $0 * 100 : $0 },
-                durationMin: element.double("duration_min") ?? element.double("duration").map { $0 > 1_440 ? $0 / 60 : $0 }
-            ))
+            if let preset = TherapyOverride(json: element, id: overrides.count) { overrides.append(preset) }
         }
         self.overrides = overrides
 
@@ -305,16 +350,19 @@ struct TherapyModel {
             for element in list {
                 guard let hour = element.int("hour"),
                       let mean = element.double("mean") ?? element.double("delivered_mean") ?? element.double("value") else { continue }
-                delivered.append(DeliveredHour(hour: hour, mean: mean, n: element.int("n") ?? element.int("n_days")))
+                delivered.append(DeliveredHour(hour: hour, mean: mean, n: element.int("n") ?? element.int("n_days"),
+                                               scheduled: element.double("scheduled")))
             }
         }
         self.delivered = delivered
         deliveredDays = root.int("delivered_days") ?? deliveredJSON?.int("days") ?? root.int("days")
         basalTotal = root.double("basal_total") ?? json.double("basal_total") ?? TherapyScheduleEntry.dailyTotal(basal)
-        deliveredTotal = root.double("delivered_total")
+        let info = root.obj("delivered_info")
+        deliveredTotal = info?.double("delivered_total") ?? root.double("delivered_total")
             ?? (delivered.count == 24 ? delivered.reduce(0) { $0 + $1.mean } : nil)
-        profileName = json.str("name") ?? root.str("profile_name") ?? root.str("source")
-        updatedAt = BIOSDate.parse(root.str("updated_at") ?? json.str("updated_at") ?? root.str("profile_at"))
+        profileName = json.str("name") ?? root.str("profile_name")
+        profileSource = root.obj("profile")?.str("source")
+        updatedAt = BIOSDate.parse(json.str("start") ?? root.str("updated_at") ?? json.str("updated_at"))
         generatedAt = BIOSDate.parse(root.str("generated_at"))
         suggestions = TherapySuggestions(json: root["suggestions"])
     }
@@ -324,7 +372,9 @@ struct TherapyModel {
     }
 
     func scheduled(hour: Int) -> Double? {
-        TherapyScheduleEntry.value(basal, at: hour * 60)
+        if hour < basalHourly.count, let value = basalHourly[hour] { return value }
+        if let entry = delivered.first(where: { $0.hour == hour }), let scheduled = entry.scheduled { return scheduled }
+        return TherapyScheduleEntry.value(basal, at: hour * 60)
     }
 
     func delivered(hour: Int) -> DeliveredHour? {

@@ -300,6 +300,9 @@ struct RecoveryTile: View {
                 }
                 CaptionText(text: "Recovery \(recovery.zone.word)")
                 KeyValueLine(text: sleepLine(recovery))
+                if let afterWake = recovery.sleep?.afterWakeText {
+                    CaptionText(text: afterWake)
+                }
                 KeyValueLine(text: hrvLine(recovery))
             } else {
                 NoDataTileContent(reason: "Keine Whoop-Daten")

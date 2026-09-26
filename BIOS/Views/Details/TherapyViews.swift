@@ -54,6 +54,16 @@ struct TherapyView: View {
         let model = store.model
         List {
             if let model, !model.isEmpty {
+                if let active = model.activeOverride {
+                    Section {
+                        Label("Aktiv: \(active.bannerText)", systemImage: "dial.medium")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(BIOSTheme.contextText)
+                            .listRowBackground(BIOSTheme.context.opacity(0.18))
+                    } footer: {
+                        Text("Laufender Override in Loop, Stand des letzten Profilabrufs.")
+                    }
+                }
                 if let suggestions = model.suggestions {
                     Section {
                         SuggestionStatusCard(suggestions: suggestions)
@@ -82,6 +92,16 @@ struct TherapyView: View {
                 Text("Nur Beobachtung, Anpassungen mit Arzt besprechen und in Loop selbst eintragen.")
                     .font(.footnote)
                     .foregroundStyle(BIOSTheme.text2)
+                if model?.profileSource == "db" {
+                    Text("Nightscout nicht erreichbar: nur das gespeicherte Basalprofil, ohne KH-Verhältnis, Empfindlichkeit, Ziele und Limits.")
+                        .font(.caption)
+                        .foregroundStyle(BIOSTheme.midText)
+                }
+                ForEach(model?.errors ?? [], id: \.self) { error in
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(BIOSTheme.text3)
+                }
                 if let fetched = store.fetchedAt {
                     Text(standText(model, fetched: fetched))
                         .font(.caption)
@@ -140,7 +160,14 @@ struct TherapyView: View {
             lines.append(line)
         }
         if let suggestions = model.suggestions, let old = suggestions.totalOld, let new = suggestions.totalNew {
-            lines.append("Vorschlag: \(BIOSFormat.number(old, digits: 2)) → \(BIOSFormat.number(new, digits: 2)) IE/Tag")
+            var line = "Vorschlag: \(BIOSFormat.number(old, digits: 2)) → \(BIOSFormat.number(new, digits: 2)) IE/Tag"
+            if let pct = suggestions.totalChangePct, abs(pct) >= 0.05 {
+                line += " (\(BIOSFormat.signed(pct, digits: 1)) %)"
+            }
+            lines.append(line)
+        }
+        if let note = model.note {
+            lines.append(note)
         }
         lines.append("Abgegeben Ø: was Loop in dieser Stunde im Mittel tatsächlich abgegeben hat (Temp-Basals eingerechnet).")
         return lines.joined(separator: "\n")
@@ -235,16 +262,28 @@ struct SuggestionStatusCard: View {
     let suggestions: TherapySuggestions
     @State private var showExcluded = false
 
+    /// Recommended (green), no change needed (neutral), not recommended (amber).
+    private var style: (tint: Color, symbol: String, title: String) {
+        if suggestions.recommended {
+            return (BIOSTheme.good, "checkmark.seal.fill", "Zur Übernahme empfohlen")
+        }
+        if suggestions.noChangeNeeded {
+            return (BIOSTheme.text2, "checkmark.circle", suggestions.statusText)
+        }
+        return (BIOSTheme.mid, "exclamationmark.triangle.fill", "Nicht zur Übernahme empfohlen")
+    }
+
     var body: some View {
-        let tint = suggestions.recommended ? BIOSTheme.good : BIOSTheme.mid
+        let style = self.style
+        let tint = style.tint
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Image(systemName: suggestions.recommended ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
-                    .foregroundStyle(tint)
-                Text(suggestions.recommended ? "Zur Übernahme empfohlen" : "Nicht zur Übernahme empfohlen")
+                Image(systemName: style.symbol)
+                    .foregroundStyle(suggestions.noChangeNeeded ? BIOSTheme.good.opacity(0.8) : tint)
+                Text(style.title)
                     .font(.headline)
             }
-            if suggestions.statusText != (suggestions.recommended ? "Zur Übernahme empfohlen" : "Nicht zur Übernahme empfohlen") {
+            if suggestions.statusText != style.title {
                 Text(suggestions.statusText)
                     .font(.subheadline)
                     .fixedSize(horizontal: false, vertical: true)
@@ -306,10 +345,11 @@ struct SuggestionStatusCard: View {
         .foregroundStyle(BIOSTheme.text1)
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(suggestions.noChangeNeeded ? BIOSTheme.card2 : tint.opacity(0.14),
+                    in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(tint.opacity(0.45), lineWidth: 1)
+                .strokeBorder(suggestions.noChangeNeeded ? BIOSTheme.separator : tint.opacity(0.45), lineWidth: 1)
         )
     }
 }
@@ -478,10 +518,12 @@ enum TherapyText {
         var lines = ["Vorschlag Basalrate (BIOS, \(today()))"]
         if suggestions.recommended {
             lines.append("Status: zur Übernahme empfohlen")
+        } else if suggestions.noChangeNeeded {
+            lines.append("Status: \(suggestions.statusText) (Profil unverändert lassen)")
         } else {
             lines.append("!!! NICHT ZUR ÜBERNAHME EMPFOHLEN !!!")
+            lines.append(suggestions.statusText)
         }
-        if suggestions.statusText != "" { lines.append(suggestions.statusText) }
         for reason in suggestions.reasons { lines.append("- \(reason)") }
         if let window = suggestions.windowText {
             lines.append("Fenster \(window)" + (suggestions.cleanText.map { ", \($0)" } ?? ""))
@@ -503,7 +545,8 @@ enum TherapyText {
             lines.append("\(block.timeText) \(BIOSFormat.number(block.value, digits: 2)) IE/Std")
         }
         if let old = suggestions.totalOld, let new = suggestions.totalNew {
-            lines.append("Summe \(BIOSFormat.number(old, digits: 2)) → \(BIOSFormat.number(new, digits: 2)) IE/Tag")
+            lines.append("Summe \(BIOSFormat.number(old, digits: 2)) → \(BIOSFormat.number(new, digits: 2)) IE/Tag"
+                + (suggestions.totalChangePct.map { " (\(BIOSFormat.signed($0, digits: 1)) %)" } ?? ""))
         } else if let total = TherapyScheduleEntry.dailyTotal(blocks) {
             lines.append("Summe \(BIOSFormat.number(total, digits: 2)) IE/Tag")
         }
@@ -530,6 +573,9 @@ enum TherapyText {
         if let maxBasal = model.maxBasal { limits.append("Max. Basalrate \(BIOSFormat.number(maxBasal, digits: 2)) IE/Std") }
         if let maxBolus = model.maxBolus { limits.append("Max. Bolus \(BIOSFormat.number(maxBolus, digits: 1)) IE") }
         section("Abgabelimits", limits)
+        if let active = model.activeOverride {
+            section("Aktiver Override", [active.bannerText])
+        }
         section("Override-Vorlagen", model.overrides.map { preset in
             ([preset.symbol, preset.name].compactMap { $0 }.joined(separator: " "))
                 + (preset.detailText.isEmpty ? "" : ": \(preset.detailText)")

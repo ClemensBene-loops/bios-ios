@@ -771,13 +771,43 @@ struct SleepBreakdown {
     let napsH: Double?
     let totalH: Double?
     let naps: [Nap]
+    /// Median total of the 28-day baseline (like the check).
+    let baselineTotalH: Double?
+    /// Naps after the last main wake (open day, counted to the next wake day).
+    let afterWakeH: Double?
+    let afterWakeNaps: [Nap]
 
     init?(json: JSONValue?) {
         guard let json else { return nil }
         let main = json.double("main_h") ?? json.double("main")
         mainH = main
+        let naps = SleepBreakdown.naps(json.list("naps"))
+        self.naps = naps
+        baselineTotalH = json.double("baseline_total_h")
+        let afterWake = json.obj("after_wake")
+        let afterNaps = SleepBreakdown.naps(afterWake?.list("naps") ?? [])
+        afterWakeNaps = afterNaps
+        afterWakeH = afterWake?.double("naps_h") ?? (afterNaps.isEmpty ? nil : afterNaps.compactMap(\.hours).reduce(0, +))
+        let napHours = json.double("naps_h") ?? (naps.isEmpty ? nil : naps.compactMap(\.hours).reduce(0, +))
+        napsH = napHours
+        let total = json.double("total_h") ?? main.map { $0 + (napHours ?? 0) }
+        totalH = total
+        if main == nil, total == nil, afterWakeH == nil { return nil }
+    }
+
+    var hasNaps: Bool {
+        (napsH ?? 0) > 0.01 || !naps.isEmpty
+    }
+
+    /// "seit dem Aufwachen: Nap 2,1 h" when there are naps after the last wake.
+    var afterWakeText: String? {
+        guard let hours = afterWakeH, hours > 0.01 else { return nil }
+        return "seit dem Aufwachen: Nap \(SleepBreakdown.duration(hours))"
+    }
+
+    static func naps(_ list: [JSONValue]) -> [Nap] {
         var naps: [Nap] = []
-        for element in json.list("naps") {
+        for element in list {
             let start = BIOSDate.parse(element.str("start"))
             let end = BIOSDate.parse(element.str("end"))
             var hours = element.double("h") ?? element.double("duration_h") ?? element.double("hours")
@@ -785,16 +815,7 @@ struct SleepBreakdown {
             if hours == nil, let start, let end { hours = end.timeIntervalSince(start) / 3_600 }
             naps.append(Nap(id: naps.count, start: start, end: end, hours: hours))
         }
-        self.naps = naps
-        let napHours = json.double("naps_h") ?? (naps.isEmpty ? nil : naps.compactMap(\.hours).reduce(0, +))
-        napsH = napHours
-        let total = json.double("total_h") ?? main.map { $0 + (napHours ?? 0) }
-        totalH = total
-        if main == nil, total == nil { return nil }
-    }
-
-    var hasNaps: Bool {
-        (napsH ?? 0) > 0.01 || !naps.isEmpty
+        return naps
     }
 
     /// "7:25 h" style is ambiguous in German; decimal hours with one digit.

@@ -476,6 +476,8 @@ struct TherapyLinkRow: View {
 
     private func subtitle(_ suggestions: TherapySuggestions?) -> String {
         guard let suggestions else { return "Basal, KH-Verhältnis, Empfindlichkeit, Ziel, abgegeben Ø" }
-        return "Basal-Vorschlag: " + (suggestions.recommended ? "zur Übernahme empfohlen" : "nicht zur Übernahme empfohlen")
+        if suggestions.recommended { return "Basal-Vorschlag: zur Übernahme empfohlen" }
+        if suggestions.noChangeNeeded { return "Basal-Vorschlag: \(suggestions.statusText)" }
+        return "Basal-Vorschlag: nicht zur Übernahme empfohlen"
     }
 }
