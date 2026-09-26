@@ -34,7 +34,32 @@ struct LogAlcoholYesterdayIntent: AppIntent {
     }
 }
 
+/// Marks every active supplement as taken today.
+struct SupplementsTakenIntent: AppIntent {
+    static let title: LocalizedStringResource = "Supplements genommen"
+
+    init() {}
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let text = await AlcoholIntentRunner.supplementsTaken()
+        return .result(dialog: "\(text)")
+    }
+}
+
 enum AlcoholIntentRunner {
+    @MainActor
+    static func supplementsTaken() async -> String {
+        let outcome = await SupplementStore.shared.setAll(on: EventStore.dayString(Date()), taken: true)
+        switch outcome {
+        case .synced:
+            return "Alle Supplements für heute in BIOS eingetragen."
+        case .queued:
+            return "Keine Verbindung. BIOS trägt die Supplements nach, sobald die App wieder online ist."
+        case .failed(let message):
+            return "Nicht eingetragen: \(message)."
+        }
+    }
+
     /// Queues and sends the mark through the shared EventStore (offline safe),
     /// returns the German confirmation Siri speaks.
     @MainActor
@@ -73,6 +98,15 @@ struct BIOSShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Alkohol gestern",
             systemImageName: "wineglass"
+        )
+        AppShortcut(
+            intent: SupplementsTakenIntent(),
+            phrases: [
+                "Supplements genommen in \(.applicationName)",
+                "\(.applicationName) Supplements genommen",
+            ],
+            shortTitle: "Supplements genommen",
+            systemImageName: "pills"
         )
     }
 }

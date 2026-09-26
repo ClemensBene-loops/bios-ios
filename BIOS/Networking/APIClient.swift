@@ -138,7 +138,7 @@ struct APIClient: Sendable {
 
     // MARK: - Internals
 
-    private func makeRequest(path: [String], query: [URLQueryItem] = [], method: String) -> URLRequest {
+    func makeRequest(path: [String], query: [URLQueryItem] = [], method: String) -> URLRequest {
         var url = baseURL
         for component in path {
             url = url.appendingPathComponent(component)
@@ -158,7 +158,7 @@ struct APIClient: Sendable {
         return request
     }
 
-    private func send(_ request: URLRequest) async throws -> Data {
+    func send(_ request: URLRequest) async throws -> Data {
         var lastError: Error = APIError.invalidResponse
         for attempt in 1...maxAttempts {
             if attempt > 1 {

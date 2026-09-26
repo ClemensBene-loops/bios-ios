@@ -60,6 +60,7 @@ final class DashboardStore: ObservableObject {
             let model = DashboardModel(json: json)
             dashboard = model
             EventStore.shared.seed(from: model.events)
+            SupplementStore.shared.dashboardIntake = model.intake
             fetchedAt = now
             lastSuccess = now
             lastError = nil

@@ -6,6 +6,10 @@ struct HeuteView: View {
     @EnvironmentObject var dashboardStore: DashboardStore
     @EnvironmentObject var seriesStore: SeriesStore
     @EnvironmentObject var router: Router
+    @EnvironmentObject var eventStore: EventStore
+    @EnvironmentObject var supplementStore: SupplementStore
+    @EnvironmentObject var medicationStore: MedicationStore
+    @State private var quickLog: QuickLogTarget?
 
     private let columns = [
         GridItem(.flexible(), spacing: 12, alignment: .top),
@@ -26,7 +30,9 @@ struct HeuteView: View {
 
                 HeroCard(infection: dashboard?.infection, glucoseTile: dashboard?.glucose)
 
-                AlcoholCard()
+                QuickStatusCard { target in
+                    quickLog = target
+                }
 
                 OutlookCard(outlook: dashboard?.outlook) {
                     router.show(.umwelt)
@@ -55,7 +61,25 @@ struct HeuteView: View {
             await dashboardStore.refresh(force: true)
             await seriesStore.refreshLoaded()
         }
+        .sheet(item: $quickLog) { target in
+            QuickLogSheet(start: target)
+                .environmentObject(eventStore)
+                .environmentObject(supplementStore)
+                .environmentObject(medicationStore)
+                .environmentObject(dashboardStore)
+                .environmentObject(seriesStore)
+                .environment(\.locale, BIOSFormat.locale)
+        }
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    quickLog = .menu
+                } label: {
+                    Image(systemName: "plus.circle")
+                }
+                .accessibilityLabel("Schnell eintragen")
+                .accessibilityHint("Alkohol, Supplements oder Medikamente")
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 if dashboardStore.isOffline {
                     Image(systemName: "wifi.slash")

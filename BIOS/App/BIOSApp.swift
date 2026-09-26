@@ -25,6 +25,8 @@ struct BIOSApp: App {
                         await DashboardStore.shared.refresh()
                         // Offline queue of alcohol marks: retry on every foreground.
                         await EventStore.shared.flush()
+                        await SupplementStore.shared.flush()
+                        await MedicationStore.shared.flush()
                     }
                 }
             }

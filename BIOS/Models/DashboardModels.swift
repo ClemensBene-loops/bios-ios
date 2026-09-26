@@ -108,6 +108,8 @@ struct DashboardModel {
     let events: DashboardEventsModel?
     /// Blood pressure tile (Build 4, optional; nil hides the tile).
     let bloodPressure: BloodPressureTileModel?
+    /// Supplements / medications status (Build 4, optional).
+    let intake: DashboardIntakeModel?
 
     /// Major schema version this app understands.
     static let supportedSchema = 1
@@ -122,6 +124,7 @@ struct DashboardModel {
         push = json.obj("push").map { ServerPushModel(json: $0) }
         errors = json.strings("errors")
         events = json.obj("events").map { DashboardEventsModel(json: $0) }
+        intake = json.obj("intake").map { DashboardIntakeModel(json: $0) }
 
         let tiles = json.obj("tiles")
         if let wien = tiles?.obj("viruses_wien") {
