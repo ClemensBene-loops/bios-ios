@@ -6,54 +6,111 @@ import SwiftUI
 
 // MARK: - Medication plan
 
-/// One plan item of today: tap logs an intake now; taken vs target on the right.
+/// One plan item of the selected day: counter with − (removes the latest
+/// intake of that day) and + (logs one at the given time), warning above per_day.
 struct PlanItemRow: View {
     @EnvironmentObject var plan: MedicationPlanStore
     @EnvironmentObject var medications: MedicationStore
     let item: MedicationPlanItem
+    /// Selected day "YYYY-MM-DD" (today or yesterday).
     let day: String
-    let onLogged: (EventStore.Outcome) -> Void
+    /// Time of a new intake (now, plan time or the chosen time).
+    let time: () -> Date
+    let onChange: (EventStore.Outcome) -> Void
+
+    @State private var busy = false
 
     var body: some View {
         let taken = plan.taken(item, on: day)
-        let done = taken >= item.target
-        Button {
-            Task { @MainActor in
-                let outcome = await plan.log(item)
-                onLogged(outcome)
-            }
-        } label: {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: done ? "checkmark.circle.fill" : "plus.circle")
-                    .font(.title3)
-                    .foregroundStyle(done ? BIOSTheme.good : BIOSTheme.accent)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item.name)
-                        .font(.body.weight(.semibold))
-                    if !item.doseText.isEmpty {
-                        Text(item.doseText)
-                            .font(.footnote)
-                            .foregroundStyle(BIOSTheme.text2)
-                    }
-                    Text(item.scheduleText)
-                        .font(.caption)
-                        .monospacedDigit()
-                        .foregroundStyle(BIOSTheme.text3)
+        let target = item.target
+        let over = taken > target
+        let done = taken == target
+        let canRemove = item.serverID.map { medications.latest(planItemID: $0, on: day) != nil } ?? false
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.name)
+                    .font(.body.weight(.semibold))
+                if !item.doseText.isEmpty {
+                    Text(item.doseText)
+                        .font(.footnote)
+                        .foregroundStyle(BIOSTheme.text2)
                 }
-                Spacer(minLength: 8)
-                Text("\(taken)/\(item.target)")
-                    .font(.headline)
+                Text(item.scheduleText)
+                    .font(.caption)
                     .monospacedDigit()
-                    .foregroundStyle(done ? BIOSTheme.good : BIOSTheme.text1)
+                    .foregroundStyle(BIOSTheme.text3)
+                if over {
+                    Label("\(taken - target) mehr als geplant", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(BIOSTheme.midText)
+                }
             }
-            .foregroundStyle(BIOSTheme.text1)
-            .contentShape(Rectangle())
+            Spacer(minLength: 6)
+            Button {
+                change(add: false)
+            } label: {
+                Image(systemName: "minus.circle")
+                    .font(.title2)
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(canRemove ? BIOSTheme.text2 : BIOSTheme.text3.opacity(0.5))
+            .disabled(!canRemove || busy)
+            .accessibilityLabel("Eine Einnahme entfernen")
+
+            Text("\(taken)/\(target)")
+                .font(.headline)
+                .monospacedDigit()
+                .foregroundStyle(over ? BIOSTheme.midText : (done ? BIOSTheme.good : BIOSTheme.text1))
+                .frame(minWidth: 40)
+                .padding(.vertical, 4)
+                .padding(.horizontal, 6)
+                .background(
+                    Capsule().fill(over ? BIOSTheme.mid.opacity(0.16) : Color.clear)
+                )
+
+            Button {
+                change(add: true)
+            } label: {
+                Image(systemName: over || done ? "plus.circle" : "plus.circle.fill")
+                    .font(.title2)
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(item.serverID == nil ? BIOSTheme.text3 : BIOSTheme.accent)
+            .disabled(item.serverID == nil || busy)
+            .accessibilityLabel("Eine Einnahme eintragen")
         }
-        .buttonStyle(.plain)
-        .disabled(item.serverID == nil)
+        .foregroundStyle(BIOSTheme.text1)
+        .accessibilityElement(children: .combine)
         .accessibilityLabel(item.name)
-        .accessibilityValue("heute \(taken) von \(item.target)")
-        .accessibilityHint("Doppeltippen trägt eine Einnahme jetzt ein")
+        .accessibilityValue("\(EventStore.dayLabel(day)) \(taken) von \(target)" + (over ? ", mehr als geplant" : ""))
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: change(add: true)
+            case .decrement: change(add: false)
+            @unknown default: break
+            }
+        }
+    }
+
+    /// + logs one intake at `time()`, − removes the latest one of the day.
+    /// Both update the counter at once (optimistic) and then reload the list
+    /// and the dashboard, so the counter matches the list below.
+    private func change(add: Bool) {
+        guard !busy else { return }
+        busy = true
+        Task { @MainActor in
+            defer { busy = false }
+            let outcome: EventStore.Outcome?
+            if add {
+                outcome = await plan.log(item, at: time())
+            } else {
+                outcome = await plan.unlog(item, on: day)
+            }
+            if let outcome {
+                onChange(outcome)
+                await medications.reloadAfterChange()
+            }
+        }
     }
 }
 

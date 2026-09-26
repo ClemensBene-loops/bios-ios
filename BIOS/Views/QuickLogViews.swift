@@ -585,20 +585,40 @@ struct MedicationLogView: View {
     @State private var note = ""
     @State private var takenAt = Date()
     @State private var message: String?
+    /// Plan section: 0 = heute, -1 = gestern (like the supplements).
+    @State private var dayOffset = 0
+    @State private var customTime = false
+    @State private var planTime = Date()
+    @State private var planMessage: String?
 
     var body: some View {
-        let recent = Array(store.entries.prefix(50))
-        let today = EventStore.dayString(Date())
-        let planItems = plan.activeItems(on: today)
+        let day = SupplementTodayView.day(offset: dayOffset)
+        let isToday = dayOffset == 0
+        let recent = Array(store.dayEntries(day).prefix(50))
+        let planItems = plan.activeItems(on: day)
         List {
             Section {
+                Picker("Tag", selection: $dayOffset) {
+                    Text("Heute").tag(0)
+                    Text("Gestern").tag(-1)
+                }
+                .pickerStyle(.segmented)
+                .listRowBackground(Color.clear)
+
+                Toggle("Eigene Uhrzeit", isOn: $customTime)
+                if customTime {
+                    DatePicker("Uhrzeit", selection: $planTime, displayedComponents: [.hourAndMinute])
+                }
+
                 if planItems.isEmpty {
-                    Text(plan.allItems.isEmpty ? "Noch kein Plan. Unter Plan bearbeiten anlegen." : "Heute nichts geplant.")
+                    Text(plan.allItems.isEmpty
+                         ? "Noch kein Plan. Unter Plan bearbeiten anlegen."
+                         : (isToday ? "Heute nichts geplant." : "Gestern nichts geplant."))
                         .foregroundStyle(BIOSTheme.text2)
                 }
                 ForEach(planItems) { item in
-                    PlanItemRow(item: item, day: today) { outcome in
-                        message = SupplementTodayView.message(outcome, done: true)
+                    PlanItemRow(item: item, day: day, time: { intakeTime(for: item, on: day) }) { outcome in
+                        planMessage = SupplementTodayView.message(outcome, done: true)
                     }
                 }
                 NavigationLink {
@@ -607,9 +627,14 @@ struct MedicationLogView: View {
                     Label("Plan bearbeiten", systemImage: "pencil")
                 }
             } header: {
-                Text("Plan heute")
+                Text(isToday ? "Plan heute" : "Plan gestern")
             } footer: {
-                Text("Tippen trägt eine Einnahme jetzt ein. Siri: \"<Name> in BIOS\".")
+                VStack(alignment: .leading, spacing: 4) {
+                    if let planMessage {
+                        Text(planMessage)
+                    }
+                    Text(planHint(isToday: isToday) + " Siri: \"<Name> in BIOS\".")
+                }
             }
 
             Section {
@@ -648,6 +673,7 @@ struct MedicationLogView: View {
                         dose = ""
                         note = ""
                         takenAt = Date()
+                        await store.reloadAfterChange()
                     }
                 } label: {
                     Label("Eintragen", systemImage: "plus.circle.fill")
@@ -666,7 +692,7 @@ struct MedicationLogView: View {
 
             Section {
                 if recent.isEmpty {
-                    Text("Noch keine Einträge")
+                    Text(isToday ? "Heute noch keine Einträge" : "Gestern keine Einträge")
                         .foregroundStyle(BIOSTheme.text2)
                 }
                 ForEach(recent) { entry in
@@ -701,7 +727,7 @@ struct MedicationLogView: View {
                     }
                 }
             } header: {
-                Text("Letzte Einträge")
+                Text(isToday ? "Einträge heute" : "Einträge gestern")
             } footer: {
                 Text("Wischen zum Löschen. Nur Protokoll, keine Dosierungshinweise.")
             }
@@ -714,6 +740,38 @@ struct MedicationLogView: View {
             await plan.flush()
             await plan.refresh()
         }
+        .refreshable {
+            await store.flush()
+            await store.refresh()
+            await plan.refresh()
+            await DashboardStore.shared.refresh(force: true)
+        }
+        .onChange(of: dayOffset) {
+            planMessage = nil
+        }
+    }
+
+    /// Time of a new plan intake on `day`: the chosen time (clamped to now),
+    /// else now for today and the next open plan time for yesterday.
+    private func intakeTime(for item: MedicationPlanItem, on day: String) -> Date {
+        let now = Date()
+        guard customTime, let start = MedicationPlanStore.startOfDay(day) else {
+            return plan.defaultTime(for: item, on: day, now: now)
+        }
+        let calendar = Calendar.current
+        let parts = calendar.dateComponents([.hour, .minute], from: planTime)
+        let date = calendar.date(bySettingHour: parts.hour ?? 12, minute: parts.minute ?? 0, second: 0, of: start) ?? now
+        return Swift.min(date, now)
+    }
+
+    private func planHint(isToday: Bool) -> String {
+        let when: String
+        if customTime {
+            when = "um \(BIOSFormat.time(planTime))"
+        } else {
+            when = isToday ? "jetzt" : "zur Planzeit"
+        }
+        return "+ trägt eine Einnahme \(when) ein, − entfernt die letzte des Tages."
     }
 }
 

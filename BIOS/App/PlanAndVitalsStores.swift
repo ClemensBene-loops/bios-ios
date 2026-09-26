@@ -12,7 +12,7 @@ import os
 /// One plan item of today from the dashboard (`intake.medication_plan_today`).
 struct PlanTodayStatus: Equatable {
     let id: String
-    let taken: Int
+    var taken: Int
     let perDay: Int
     let lastTakenAt: String?
 
@@ -164,14 +164,55 @@ final class MedicationPlanStore: ObservableObject {
         allItems.filter { $0.isActive(on: day) }
     }
 
-    /// Taken today: the higher of the local log and the server count (the
-    /// server knows intakes from other devices, the log knows queued ones).
+    /// Intakes of a plan item on a day. Once the medication list is loaded
+    /// (MedicationStore.listLoadedAt), the list is the truth: it holds every
+    /// intake of the last 30 days plus queued ones (the server counts the same
+    /// entries by plan_item_id), and a deleted entry leaves it at once. Before
+    /// that (cold start, offline) the higher of the cached log and the
+    /// dashboard count (`intake.medication_plan_today`, today only).
     func taken(_ item: MedicationPlanItem, on day: String) -> Int {
         guard let id = item.serverID else { return 0 }
         let local = MedicationStore.shared.count(planItemID: id, on: day)
+        if MedicationStore.shared.listLoadedAt != nil { return local }
         let isToday = day == EventStore.dayString(Date())
         let server = isToday ? (today.first { $0.id == id }?.taken ?? 0) : 0
         return Swift.max(local, server)
+    }
+
+    /// Optimistic change of the dashboard count after an add (+1) or delete
+    /// (−1) of today, until the next dashboard load replaces it.
+    func adjustToday(planItemID: String?, day: String, by delta: Int) {
+        guard let planItemID, day == EventStore.dayString(Date()),
+              let index = today.firstIndex(where: { $0.id == planItemID }) else { return }
+        today[index].taken = Swift.max(0, today[index].taken + delta)
+    }
+
+    /// Default time of an intake on `day`: now for today; for an earlier day
+    /// the next open plan time of the item (by the count already logged that
+    /// day), else the current clock time on that day. Never in the future.
+    func defaultTime(for item: MedicationPlanItem, on day: String, now: Date = Date()) -> Date {
+        let calendar = Calendar.current
+        guard day != EventStore.dayString(now), let start = Self.startOfDay(day) else { return now }
+        let times = item.times.sorted()
+        var hour = calendar.component(.hour, from: now)
+        var minute = calendar.component(.minute, from: now)
+        if !times.isEmpty {
+            let slot = times[Swift.min(taken(item, on: day), times.count - 1)]
+            let parts = slot.split(separator: ":").compactMap { Int($0) }
+            if parts.count == 2 {
+                hour = parts[0]
+                minute = parts[1]
+            }
+        }
+        let date = calendar.date(bySettingHour: hour, minute: minute, second: 0, of: start) ?? now
+        return Swift.min(date, now)
+    }
+
+    /// Local midnight of "YYYY-MM-DD".
+    static func startOfDay(_ day: String) -> Date? {
+        let parts = day.prefix(10).split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3 else { return nil }
+        return Calendar.current.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))
     }
 
     /// (taken, target) summed over the plan of a day.
@@ -184,9 +225,23 @@ final class MedicationPlanStore: ObservableObject {
     /// Logs one intake of a plan item now (or at `date`); `dose` overrides the plan dose.
     @discardableResult
     func log(_ item: MedicationPlanItem, at date: Date = Date(), dose: String? = nil) async -> EventStore.Outcome {
-        await MedicationStore.shared.add(
+        let outcome = await MedicationStore.shared.add(
             name: item.name, dose: dose ?? item.planDose, note: nil, at: date, planItemID: item.serverID
         )
+        if case .synced = outcome {
+            adjustToday(planItemID: item.serverID, day: String(MedicationStore.stamp(date).prefix(10)), by: 1)
+        }
+        return outcome
+    }
+
+    /// Removes the latest intake of a plan item on `day` ("−" in the counter);
+    /// nil when there is none to remove.
+    @discardableResult
+    func unlog(_ item: MedicationPlanItem, on day: String) async -> EventStore.Outcome? {
+        guard let id = item.serverID, let entry = MedicationStore.shared.latest(planItemID: id, on: day) else {
+            return nil
+        }
+        return await MedicationStore.shared.remove(entry)
     }
 
     @discardableResult

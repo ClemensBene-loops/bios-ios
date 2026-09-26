@@ -450,6 +450,10 @@ final class MedicationStore: ObservableObject {
     @Published private(set) var pending: [PendingMedication] = []
     @Published private(set) var lastError: String?
     @Published private(set) var isSyncing = false
+    /// Last successful GET /v1/medications in this session. From then on the
+    /// list covers every intake of the last 30 days (other devices included),
+    /// so plan counters count the list instead of the dashboard snapshot.
+    @Published private(set) var listLoadedAt: Date?
 
     private static let entriesFile = "medications_entries.json"
     private static let queueFile = "medications_pending.json"
@@ -482,6 +486,18 @@ final class MedicationStore: ObservableObject {
         entries.filter { $0.planItemID == planItemID && $0.takenAt.hasPrefix(day) }.count
     }
 
+    /// Entries of one day, newest first.
+    func dayEntries(_ day: String) -> [MedicationEntry] {
+        entries.filter { $0.takenAt.hasPrefix(day) }
+    }
+
+    /// Latest entry of a plan item on a day ("−" in the plan counter removes it).
+    func latest(planItemID: String, on day: String) -> MedicationEntry? {
+        entries
+            .filter { $0.planItemID == planItemID && $0.takenAt.hasPrefix(day) }
+            .max { $0.takenAt < $1.takenAt }
+    }
+
     func isPending(_ entry: MedicationEntry) -> Bool {
         entry.serverID == nil
     }
@@ -500,16 +516,34 @@ final class MedicationStore: ObservableObject {
     }
 
     func delete(_ entry: MedicationEntry) {
+        Task { @MainActor in
+            await self.remove(entry)
+            await self.reloadAfterChange()
+        }
+    }
+
+    /// Removes an entry optimistically and syncs (DELETE /v1/medications/{id}).
+    @discardableResult
+    func remove(_ entry: MedicationEntry) async -> EventStore.Outcome {
         entries.removeAll { $0.localID == entry.localID }
         if let serverID = entry.serverID {
             pending.append(.delete(serverID: serverID))
+            MedicationPlanStore.shared.adjustToday(planItemID: entry.planItemID,
+                                                   day: String(entry.takenAt.prefix(10)), by: -1)
         } else {
             pending.removeAll { $0 == .add(localID: entry.localID) }
         }
         persist()
-        Task { @MainActor in
-            await self.flush()
-        }
+        return await flush()
+    }
+
+    /// After an add or delete: reload the list and the dashboard (plan counters,
+    /// intake, Routine card) so every counter matches the list. Skipped while
+    /// changes are still queued (offline): the local state is the best one then.
+    func reloadAfterChange() async {
+        guard pending.isEmpty else { return }
+        await refresh()
+        await DashboardStore.shared.refresh(force: true)
     }
 
     @discardableResult
@@ -550,6 +584,11 @@ final class MedicationStore: ObservableObject {
                     return .queued
                 }
                 pending.removeFirst()
+                // A rejected add must not stay as a local "wartet" entry that
+                // keeps counting in the plan counters.
+                if case .add(let localID) = change {
+                    entries.removeAll { $0.localID == localID && $0.serverID == nil }
+                }
                 persist()
                 lastError = error.localizedDescription
                 return .failed(error.localizedDescription)
@@ -575,6 +614,7 @@ final class MedicationStore: ObservableObject {
             entries = local + server.filter { !deleted.contains($0.serverID ?? "") }
             sortEntries()
             persist()
+            listLoadedAt = Date()
         } catch {
             if !ErrorKind.isCancellation(error) {
                 lastError = ErrorKind.isOffline(error) ? "Keine Verbindung" : error.localizedDescription
