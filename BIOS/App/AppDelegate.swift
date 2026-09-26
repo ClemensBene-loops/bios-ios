@@ -23,6 +23,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         UNUserNotificationCenter.current().delegate = notificationDelegate
         registerNotificationCategories()
         requestAuthorizationAndRegister()
+        // Early, so a Live Activity started by push (iOS 17.2+) delivers its
+        // update token even when the system launches the app in the background.
+        LiveActivityController.shared.startObserving()
         return true
     }
 

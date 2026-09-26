@@ -1,8 +1,9 @@
 name: 0. Compile Check
 run-name: Compile Check (${{ github.ref_name }})
 
-# Compiles the app for the iOS Simulator without code signing on every push to a
-# branch other than main. No Apple contact, no secrets, no artifacts except the
+# Compiles the app and its widget extension (scheme BIOS builds both targets)
+# for the iOS Simulator without code signing on every push to a branch other
+# than main. No Apple contact, no secrets, no artifacts except the
 # build log on failure (the log contains only compiler output, never secrets:
 # Config/Info.plist stays empty here). Feedback loop for Swift changes without a Mac.
 on:

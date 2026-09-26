@@ -39,6 +39,10 @@
 	</dict>
 	<!-- v2 is dark first (approved mockup): fixed app-wide from launch, also for
 	     system sheets and the launch screen, no light flash. -->
+	<!-- Live Activity (views in the BIOSWidgets extension). No
+	     NSSupportsLiveActivitiesFrequentUpdates: a few updates per day. -->
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 	<key>UIUserInterfaceStyle</key>
 	<string>Dark</string>
 	<key>UISupportedInterfaceOrientations</key>

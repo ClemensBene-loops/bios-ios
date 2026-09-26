@@ -34,6 +34,13 @@ struct BIOSApp: App {
                         await MedicationStore.shared.flush()
                         await MedicationPlanStore.shared.flush()
                         await VitalsStore.shared.flush()
+                        // Live Activity: start (fallback), refresh or end at night.
+                        await LiveActivityController.shared.appBecameActive()
+                    }
+                } else if newPhase == .background {
+                    // Intakes logged in the app show up on the lock screen at once.
+                    Task { @MainActor in
+                        await LiveActivityController.shared.updateRunning()
                     }
                 }
             }

@@ -16,6 +16,12 @@ targets:
     deploymentTarget: "17.0"
     sources:
       - path: BIOS
+      # ActivityAttributes, Live Activity intents, brand assets: compiled into
+      # the app and the widget extension.
+      - path: Shared
+    dependencies:
+      # Builds and embeds BIOSWidgets.appex in BIOS.app/PlugIns.
+      - target: BIOSWidgets
     # Signing defaults (team, style) and APS_ENVIRONMENT live in the xcconfigs.
     # Settings below would override the xcconfig, so signing is kept out of here.
     configFiles:
@@ -38,11 +44,44 @@ targets:
         SWIFT_VERSION: "5.0"
         ENABLE_PREVIEWS: YES
 
+  # Widget extension: the Live Activity (lock screen banner, Dynamic Island).
+  # Own App ID at.bene.bios.widgets with its own App Store profile (fastlane),
+  # no entitlements (Live Activities need no capability, no App Group).
+  BIOSWidgets:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: BIOSWidgets
+      - path: Shared
+    configFiles:
+      Debug: Config/Debug.xcconfig
+      Release: Config/Release.xcconfig
+    settings:
+      base:
+        PRODUCT_NAME: BIOSWidgets
+        PRODUCT_BUNDLE_IDENTIFIER: at.bene.bios.widgets
+        # Must equal the app (App Store validation); agvtool sets the build
+        # number of all targets in workflow 4.
+        MARKETING_VERSION: "2.0"
+        CURRENT_PROJECT_VERSION: "1"
+        VERSIONING_SYSTEM: apple-generic
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: BIOSWidgets/Info.plist
+        TARGETED_DEVICE_FAMILY: "1"
+        SUPPORTS_MACCATALYST: NO
+        SWIFT_VERSION: "5.0"
+        ENABLE_PREVIEWS: YES
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"
+
 schemes:
   BIOS:
     build:
       targets:
         BIOS: all
+        BIOSWidgets: all
     run:
       config: Debug
     archive:

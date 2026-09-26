@@ -17,7 +17,7 @@ repo (`api/server.py`, `api/dashboard.py`, `api/series.py`, `api/intake.py`,
 |---|---|
 | Display name | BIOS |
 | App Store Connect record | BIOS Health |
-| Bundle ID | `at.bene.bios` |
+| Bundle ID | `at.bene.bios`, widget extension `at.bene.bios.widgets` (Live Activity) |
 | Team ID | `D457V2W8RG` (not a secret, also in `Config/Base.xcconfig`) |
 | Minimum iOS | 17.0, iPhone only, portrait |
 | Version | `MARKETING_VERSION` 2.0 (`project.yml`), build number = latest TestFlight build + 1 |
@@ -102,6 +102,23 @@ the APNs `thread-id` (`whoop` -> Heute + Infekt-Check, `outlook` -> Umwelt,
 `bios.tab` still land in the right place, and unknown values fall back instead of
 failing. There is no URL scheme; deep links come only from pushes.
 
+### Live Activity (lock screen, Dynamic Island)
+
+Widget extension `BIOSWidgets` (`at.bene.bios.widgets`, iOS 17). Lock screen banner:
+left the Gesundheits-Score ring (six pillar colors), right the current information
+per mode (`normal`: next intake; `infection`: "Infekt · Tag n" + Infekt-Score;
+`temperature`: value, time, "Erhöht"), bottom the supplements. Dynamic Island:
+minimal = "b" mark with a status dot (the usual state next to Loop), compact =
+mark + score, expanded with "Genommen" / "Später" (`LiveActivityIntent`, runs in
+the app, logs the intake through the offline queue). The app uploads the
+push-to-start token (iOS 17.2+) and every activity's update token to
+`POST /v1/live-activity/token`; the server starts, updates and ends the activity
+via APNs (`apns-push-type: liveactivity`, topic `at.bene.bios.push-type.liveactivity`,
+`attributes-type: BIOSActivityAttributes`, content-state keys in
+`Shared/BIOSActivityAttributes.swift`). Fallback without server: the app starts a
+local activity when it opens during the day and ends it at night (22 to 6 h).
+Toggle "Live Activity" in Mehr.
+
 ## Repository layout
 
 - `project.yml`: XcodeGen spec, the single source of truth for the Xcode project.
@@ -119,7 +136,11 @@ failing. There is no URL scheme; deep links come only from pushes.
   `UmweltView`, `MehrView`, `Details/`, `Charts/`, `QuickLogViews`, `AlcoholViews`,
   `BloodPressureViews`, `Theme`, `Components`.
 - `BIOS/Config/AppConfig.swift`: reads the build-time config from Info.plist.
-- `BIOS/Assets.xcassets`: "Seed" app icon, splash mark `BIOSMark` and `LaunchBackground` color (prepared from `docs/brand/bios-seed.png` by `tools/make_icon.py`, preview in `docs/icon-preview.png`; wordmark SVGs in `docs/brand`, drawn in code in `BIOS/Views/Brand.swift`).
+- `BIOSWidgets/`: widget extension (Live Activity views, `Info.plist`).
+- `Shared/`: compiled into the app and the extension: `BIOSActivityAttributes`
+  (content state, brand colors), Live Activity intents, `BrandAssets.xcassets`
+  (mark `BIOSMark`).
+- `BIOS/Assets.xcassets`: "Seed" app icon and `LaunchBackground` color (splash mark `BIOSMark` in `Shared/BrandAssets.xcassets`) (prepared from `docs/brand/bios-seed.png` by `tools/make_icon.py`, preview in `docs/icon-preview.png`; wordmark SVGs in `docs/brand`, drawn in code in `BIOS/Views/Brand.swift`).
 - `Config/`: `Info.plist`, `BIOS.entitlements` (`aps-environment`), xcconfigs
   (`Base` = team + automatic signing for local builds, `Debug` = `APS_ENVIRONMENT=development`,
   `Release` = `production`, optional git-ignored `Local.xcconfig`).
@@ -136,9 +157,9 @@ they never run in parallel.
 |---|---|---|---|
 | 0. Compile Check | every push to a branch other than `main` (not for `**.md`, `docs/**`, `tools/**`), or manual | none | Nothing. `xcodegen generate`, then `xcodebuild build` Release and Debug for the iOS Simulator without signing. No secrets; only the build log on failure (7 days). Errors and warnings land in the job summary. |
 | 1. Validate Secrets | manual | `validate_secrets` | Nothing. Checks `GH_PAT`, that `Match-Secrets` exists and is private, the API key and that match decrypts; lists bundle ID, capabilities, app record and distribution certificates. |
-| 2. Add Identifiers | manual | `identifiers` | Registers the App ID `at.bene.bios` if missing and enables the Push Notifications capability. Idempotent. |
-| 3. Create Certificates | manual | `certs` | Creates the App Store provisioning profile for `at.bene.bios` and stores it in `ClemensBene-loops/Match-Secrets`. **Reuses** the distribution certificate shared with Loop; never creates, renews or revokes certificates, no nuke logic. Fails if the App ID or Push is missing. |
-| 4. Build BIOS | manual (any branch) and monthly schedule | `build` + `release` | Runner `macos-26`, Xcode 26.5 (falls back to the newest installed). Generates the project, injects the app config, sets build number = latest TestFlight build + 1, signs with the match profile, verifies the IPA has `aps-environment = production`, uploads to TestFlight (does not wait for processing). On failure only the build log is kept (7 days); the IPA is never uploaded as an artifact because it contains `BIOS_API_SECRET`. |
+| 2. Add Identifiers | manual | `identifiers` | Registers the App ID `at.bene.bios` if missing and enables the Push Notifications capability; registers `at.bene.bios.widgets` (no capability). Idempotent. |
+| 3. Create Certificates | manual | `certs` | Creates the missing App Store provisioning profiles for `at.bene.bios` and `at.bene.bios.widgets` and stores them in `ClemensBene-loops/Match-Secrets`. **Reuses** the distribution certificate shared with Loop; never creates, renews or revokes certificates, no nuke logic. Fails if the App ID or Push is missing. |
+| 4. Build BIOS | manual (any branch) and monthly schedule | `build` + `release` | Runner `macos-26`, Xcode 26.5 (falls back to the newest installed). Generates the project, injects the app config, sets build number = latest TestFlight build + 1, signs app and extension with their match profiles, verifies the IPA has `aps-environment = production` and an embedded, signed `BIOSWidgets.appex`, uploads to TestFlight (does not wait for processing). On failure only the build log is kept (7 days); the IPA is never uploaded as an artifact because it contains `BIOS_API_SECRET`. |
 
 The App Store Connect app record ("BIOS Health") was created once by hand in
 App Store Connect; workflow 4 needs it.
@@ -258,6 +279,7 @@ limit) or 503.
 | `GET/PUT /v1/supplements`, `POST/GET /v1/intake` | supplement regimen and daily ticks |
 | `POST/GET /v1/medications`, `DELETE /v1/medications/{id}` | medication log |
 | `POST /v1/test-push` | test push to this device |
+| `POST /v1/live-activity/token` | Live Activity push tokens (push-to-start, update, `enabled`, `ended`) |
 
 Rules the app relies on:
 

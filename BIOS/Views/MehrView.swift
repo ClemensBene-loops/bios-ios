@@ -68,6 +68,8 @@ struct MehrView: View {
                 }
             }
 
+            LiveActivitySection()
+
             Section {
                 if let items = dashboard?.freshness, !items.isEmpty {
                     ForEach(items) { item in

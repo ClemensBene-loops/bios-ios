@@ -12,9 +12,10 @@ This removes the noise, keeps the anti-aliased edges and yields:
   1024x1024 RGB without alpha (App Store rejects alpha), flat green edge to
   edge, no rounded corners (iOS masks them).
 - docs/icon-preview.png (same file, for the README).
-- BIOS/Assets.xcassets/BIOSMark.imageset/BIOSMark@2x.png / @3x.png
+- Shared/BrandAssets.xcassets/BIOSMark.imageset/BIOSMark@2x.png / @3x.png
   the cream "b" alone on transparency, cropped symmetrically around the icon
-  center, for the start animation and the "Über" row.
+  center, for the start animation, the "Über" row and the Live Activity
+  (Shared/ is compiled into the app and the widget extension).
 - BIOS/Assets.xcassets/LaunchBackground.colorset: the icon green, used by
   UILaunchScreen and the splash so there is no flash.
 
@@ -36,7 +37,7 @@ SOURCE = ROOT / "docs" / "brand" / "bios-seed.png"
 ASSETS = ROOT / "BIOS" / "Assets.xcassets"
 OUT_ICON = ASSETS / "AppIcon.appiconset" / "AppIcon-1024.png"
 OUT_PREVIEW = ROOT / "docs" / "icon-preview.png"
-OUT_MARK = ASSETS / "BIOSMark.imageset"
+OUT_MARK = ROOT / "Shared" / "BrandAssets.xcassets" / "BIOSMark.imageset"
 OUT_BG = ASSETS / "LaunchBackground.colorset"
 
 ICON = 1024

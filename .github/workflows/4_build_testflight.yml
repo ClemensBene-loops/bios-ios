@@ -147,6 +147,14 @@ jobs:
             exit 1
           fi
           echo "aps-environment = production"
+          # The Live Activity extension must be embedded and signed.
+          APPEX="$APP/PlugIns/BIOSWidgets.appex"
+          if [ ! -d "$APPEX" ]; then
+            echo "::error::BIOSWidgets.appex is missing in the IPA."
+            exit 1
+          fi
+          codesign --verify --strict "$APPEX"
+          echo "BIOSWidgets.appex embedded and signed"
 
       - name: Fastlane upload to TestFlight
         run: bundle exec fastlane release
