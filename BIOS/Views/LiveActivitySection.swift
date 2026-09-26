@@ -13,19 +13,27 @@ struct LiveActivitySection: View {
             StatusRow(title: "iOS", status: systemStatus)
             if !controller.systemEnabled {
                 Button {
-                    if let url = SystemSettings.notificationsURL {
+                    if let url = SystemSettings.appSettingsURL {
                         openURL(url)
                     }
                 } label: {
                     Label("In Einstellungen erlauben", systemImage: "gearshape")
                 }
             }
+            Toggle(isOn: $controller.nightPauseEnabled) {
+                Label("Nachtpause", systemImage: "moon")
+            }
+            .disabled(!controller.isEnabled)
             StatusRow(title: "Sperrbildschirm", status: runningStatus)
             StatusRow(title: "BIOS-Server", status: tokenStatus)
         } header: {
             Text("Live Activity")
         } footer: {
-            Text("Gesundheits-Score, nächste Einnahme und Supplements auf dem Sperrbildschirm und in der Dynamic Island. Der Server startet sie um 6:30, aktualisiert sie stündlich per Push und beendet sie um 23:30. Läuft keine, startet die App sie beim Öffnen. Genommen und Später direkt in der Dynamic Island.")
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Gesundheits-Score, nächste Einnahme und Supplements auf dem Sperrbildschirm und in der Dynamic Island. Der Server startet sie um 6:30, aktualisiert sie stündlich per Push und beendet sie um 23:30. Läuft keine, startet die App sie beim Öffnen. Genommen und Später direkt in der Dynamic Island.")
+                Text("Nachtpause an: Von 23:30 bis 6:30 beendet die App das Banner und startet keins.")
+                Text("Aus: Das Banner bleibt nachts mit dem letzten Stand stehen (der Server schickt nachts keine Updates und beendet es um 23:30).")
+            }
         }
     }
 
@@ -42,8 +50,8 @@ struct LiveActivitySection: View {
         if controller.isRunning {
             return StatusDisplay(text: "Läuft", symbol: "checkmark.circle", tint: BIOSTheme.good)
         }
-        if LiveActivityController.isNight() {
-            return StatusDisplay(text: "Nachtpause bis 6:00", symbol: "moon", tint: BIOSTheme.text3)
+        if controller.isInNightPause() {
+            return StatusDisplay(text: "Nachtpause bis 6:30", symbol: "moon", tint: BIOSTheme.text3)
         }
         return StatusDisplay(text: "Läuft nicht, startet beim nächsten Öffnen", symbol: "circle.dashed", tint: BIOSTheme.text3)
     }

@@ -16,7 +16,11 @@ import os
 //   running, a local one is started with GET /v1/live-activity (the content
 //   the next push would send), offline from the cached dashboard and the
 //   plan stores. A running activity is refreshed the same way.
-// - Night (23:30 to 6:00): the app ends running activities and starts none.
+// - Night (23:30 to 6:30, same window as the server): only with the
+//   "Nachtpause" toggle on (default off) the app ends running activities and
+//   starts none. Off: the app ends nothing for the night and may start one
+//   locally at any time; the server still sends no updates at night and ends
+//   its activity at 23:30.
 // No `NSSupportsLiveActivitiesFrequentUpdates`: the server updates at most
 // every hour (at the latest every 90 min), well inside the normal APNs budget.
 
@@ -94,18 +98,29 @@ final class LiveActivityController: ObservableObject {
             Task { await self.enabledChanged() }
         }
     }
+    /// "Nachtpause" toggle in Mehr (default off): end and don't start at night.
+    @Published var nightPauseEnabled: Bool {
+        didSet {
+            guard nightPauseEnabled != oldValue else { return }
+            UserDefaults.standard.set(nightPauseEnabled, forKey: Self.nightPauseKey)
+            guard isEnabled else { return }
+            Task { await self.appBecameActive() }
+        }
+    }
     /// Live Activities allowed in iOS settings (per app).
     @Published private(set) var systemEnabled: Bool
     @Published private(set) var isRunning = false
     @Published private(set) var tokenStatus: TokenStatus = .none
 
-    /// Night window in minutes of the day: from 23:30 (server `--end`) to 6:00.
+    /// Night window in minutes of the day: from 23:30 (server `--end`) to 6:30
+    /// (server `--start`).
     static let nightStartMinute = 23 * 60 + 30
-    static let morningMinute = 6 * 60
+    static let morningMinute = 6 * 60 + 30
 
     private static let log = Logger(subsystem: "at.bene.bios", category: "liveactivity")
     private static let enabledKey = "bios.liveActivity.enabled"
     private static let snoozeKey = "bios.liveActivity.snooze"
+    private static let nightPauseKey = "bios.liveActivity.nightPause"
 
     private var observing = false
     private var observedActivities: Set<String> = []
@@ -117,6 +132,7 @@ final class LiveActivityController: ObservableObject {
 
     init() {
         isEnabled = UserDefaults.standard.object(forKey: Self.enabledKey) as? Bool ?? true
+        nightPauseEnabled = UserDefaults.standard.object(forKey: Self.nightPauseKey) as? Bool ?? false
         systemEnabled = ActivityAuthorizationInfo().areActivitiesEnabled
     }
 
@@ -153,12 +169,12 @@ final class LiveActivityController: ObservableObject {
         refreshRunning()
     }
 
-    /// App became active: end at night, else start (fallback) or refresh the
-    /// running activity; retry failed token requests.
+    /// App became active: end during the night pause, else start (fallback)
+    /// or refresh the running activity; retry failed token requests.
     func appBecameActive() async {
         systemEnabled = ActivityAuthorizationInfo().areActivitiesEnabled
         await retryTokens()
-        guard isEnabled, !Self.isNight() else {
+        guard isEnabled, !isInNightPause() else {
             await endAll()
             return
         }
@@ -490,6 +506,11 @@ final class LiveActivityController: ObservableObject {
     }
 
     // MARK: - Helpers
+
+    /// Night pause toggle on and inside the night window.
+    func isInNightPause(_ date: Date = Date()) -> Bool {
+        nightPauseEnabled && Self.isNight(date)
+    }
 
     static func isNight(_ date: Date = Date()) -> Bool {
         let parts = Calendar.current.dateComponents([.hour, .minute], from: date)

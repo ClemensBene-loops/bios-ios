@@ -661,9 +661,15 @@ struct LegendView: View {
     }
 }
 
-/// Opens the iOS notification settings of BIOS.
+/// iOS settings pages of BIOS.
 enum SystemSettings {
+    /// Notification settings of BIOS.
     static var notificationsURL: URL? {
         URL(string: UIApplication.openNotificationSettingsURLString)
+    }
+
+    /// The BIOS page in iOS Settings (incl. the Live Activities switch).
+    static var appSettingsURL: URL? {
+        URL(string: UIApplication.openSettingsURLString)
     }
 }
