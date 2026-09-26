@@ -27,6 +27,7 @@ enum MetricKind {
     case tdd
     case per10g
     case insAuto
+    case infectionScore
 
     var metric: String {
         switch self {
@@ -41,6 +42,7 @@ enum MetricKind {
         case .tdd: return "tdd"
         case .per10g: return "ins_per_10g"
         case .insAuto: return "ins_auto"
+        case .infectionScore: return "infection_score"
         }
     }
 
@@ -57,6 +59,7 @@ enum MetricKind {
         case .tdd: return "Gesamtinsulin (TDD)"
         case .per10g: return "Insulin/10 g KH"
         case .insAuto: return "Auto-Bolus (Loop-Korrekturen)"
+        case .infectionScore: return "Infekt-Score"
         }
     }
 
@@ -71,6 +74,7 @@ enum MetricKind {
         case .glucoseDaily, .tir: return "drop"
         case .tdd, .per10g: return "syringe"
         case .insAuto: return nil
+        case .infectionScore: return "thermometer.medium"
         }
     }
 
@@ -87,6 +91,7 @@ enum MetricKind {
         case .tdd: return BIOSTheme.insulin
         case .per10g: return BIOSTheme.per10g
         case .insAuto: return BIOSTheme.auto
+        case .infectionScore: return BIOSTheme.skin
         }
     }
 
@@ -100,6 +105,7 @@ enum MetricKind {
         case .sleep: return "h"
         case .glucoseDaily: return "mg/dL"
         case .tdd, .per10g, .insAuto: return "U"
+        case .infectionScore: return "von 100"
         }
     }
 
@@ -127,58 +133,71 @@ enum MetricKind {
         }
     }
 
-    // MARK: Header texts
+    // MARK: Header texts (follow the 7/28 picker)
 
-    func value(_ model: SeriesModel) -> String? {
-        if self == .tir {
-            guard let tir = model.points.last(where: { $0.tir != nil || $0.value != nil }) else { return nil }
-            return BIOSFormat.number(tir.tir ?? tir.value, digits: 0)
+    /// Values of the range for the header: TIR uses `tir`, all others `v`; nulls are skipped.
+    func rangeValues(_ model: SeriesModel) -> [Double] {
+        model.points.compactMap { point -> Double? in
+            self == .tir ? (point.tir ?? point.value) : point.value
         }
-        guard let latest = model.latest?.value else { return nil }
-        if self == .skinTemp, isDeviation(model) {
-            return BIOSFormat.signed(latest, digits: 1)
-        }
-        return BIOSFormat.number(latest, digits: digits)
     }
 
-    func sub(_ model: SeriesModel) -> String? {
-        let latestPoint: SeriesPoint? = self == .tir
-            ? model.points.last(where: { $0.tir != nil || $0.value != nil })
-            : model.latest
-        let dayPrefix = latestPoint.map { BIOSFormat.relativeDayOf($0.date) } ?? ""
-        switch self {
-        case .recovery:
-            return "Zone \(BIOSZone(key: nil, value: model.latest?.value).word)"
-        case .tir:
-            return [dayPrefix, "70 bis 180 mg/dL"].filter { !$0.isEmpty }.joined(separator: ", ")
-        case .insAuto:
-            return "nur Zusatzinfo"
-        case .skinTemp where isDeviation(model):
-            return "Abweichung zur Baseline"
-        default:
-            break
-        }
-        guard let median = model.baseline?.median else {
-            return isWholeDays ? dayPrefix : nil
-        }
-        var parts: [String] = []
-        if isWholeDays, !dayPrefix.isEmpty { parts.append(dayPrefix) }
-        let baselineDigits = self == .per10g ? 2 : digits
-        let unitSuffix = self == .sleep ? " h" : ""
-        parts.append("Baseline \(BIOSFormat.number(median, digits: baselineDigits))\(unitSuffix)")
-        if let latest = model.latest?.value {
-            switch self {
-            case .hrv, .tdd, .per10g:
-                if median > 0 {
-                    parts.append(BIOSFormat.signed((latest / median - 1) * 100) + " %")
-                }
-            case .sleep:
-                break
-            default:
-                parts.append(BIOSFormat.signed(latest - median, digits: digits))
+    private func latestPoint(_ model: SeriesModel) -> (date: Date, value: Double)? {
+        for point in model.points.reversed() {
+            if let value = self == .tir ? (point.tir ?? point.value) : point.value {
+                return (point.date, value)
             }
         }
-        return parts.joined(separator: " · ")
+        return nil
+    }
+
+    private func format(_ value: Double, _ model: SeriesModel) -> String {
+        if self == .skinTemp, isDeviation(model) {
+            return BIOSFormat.signed(value, digits: 1)
+        }
+        return BIOSFormat.number(value, digits: digits)
+    }
+
+    /// Big number: mean over the selected range.
+    func value(_ model: SeriesModel) -> String? {
+        let values = rangeValues(model)
+        guard !values.isEmpty else { return nil }
+        return format(values.reduce(0, +) / Double(values.count), model)
+    }
+
+    /// "Ø 28 Tage · 25 von 28 Tagen" and "gestern 127 · Baseline 149".
+    func sub(_ model: SeriesModel, days: Int) -> String? {
+        let values = rangeValues(model)
+        guard !values.isEmpty else { return nil }
+        let total = model.points.count
+        var first = "Ø \(model.days ?? days) Tage"
+        if total > 0, values.count < total {
+            first += " · \(values.count) von \(total) Tagen"
+        }
+        var second: [String] = []
+        if let latest = latestPoint(model) {
+            let unitSuffix = self == .tir ? " %" : (self == .sleep ? " h" : "")
+            second.append("\(BIOSFormat.relativeDayOf(latest.date)) \(format(latest.value, model))\(unitSuffix)")
+        }
+        switch self {
+        case .recovery:
+            if let latest = latestPoint(model) {
+                second.append("Zone \(BIOSZone(key: nil, value: latest.value).word)")
+            }
+        case .tir:
+            second.append("Ziel ≥ 70 %")
+        case .insAuto:
+            second.append("nur Zusatzinfo")
+        default:
+            if let median = model.baseline?.median {
+                let baselineDigits = self == .per10g ? 2 : digits
+                let text = self == .skinTemp && isDeviation(model)
+                    ? BIOSFormat.signed(median, digits: 1)
+                    : BIOSFormat.number(median, digits: baselineDigits)
+                second.append("Baseline \(text)" + (self == .sleep ? " h" : ""))
+            }
+        }
+        return second.isEmpty ? first : first + "\n" + second.joined(separator: " · ")
     }
 
     /// Skin temperature may come as deviation (around 0) or absolute (around 34).
@@ -195,6 +214,8 @@ enum MetricKind {
         spec.unit = ChartXUnit.from(resolution: model.resolution)
         spec.rangeDays = days
         spec.height = compact ? 124 : 150
+        spec.valueUnit = unit
+        spec.valueDigits = digits
         let color = self.color
         switch self {
         case .recovery:
@@ -209,14 +230,15 @@ enum MetricKind {
                 guard let tir = point.tir ?? point.value else { continue }
                 let tbr = point.tbr ?? 0
                 let tar = point.tar ?? max(0, 100 - tir - tbr)
-                bars.append(ChartBarPoint(id: bars.count, date: point.date, value: tbr, color: BIOSTheme.bad))
-                bars.append(ChartBarPoint(id: bars.count, date: point.date, value: tir, color: BIOSTheme.good))
-                bars.append(ChartBarPoint(id: bars.count, date: point.date, value: tar, color: BIOSTheme.mid))
+                bars.append(ChartBarPoint(id: bars.count, date: point.date, value: tbr, color: BIOSTheme.bad, label: "unter 70"))
+                bars.append(ChartBarPoint(id: bars.count, date: point.date, value: tir, color: BIOSTheme.good, label: "70 bis 180"))
+                bars.append(ChartBarPoint(id: bars.count, date: point.date, value: tar, color: BIOSTheme.mid, label: "über 180"))
             }
             spec.bars = bars
             spec.yMin = 0
             spec.yMax = 100
-            spec.refs = [ChartRef(id: 0, value: 70, label: "Ziel 70 %")]
+            // Unlabeled line; "Ziel 70 %" sits in the legend, outside the bars.
+            spec.refs = [ChartRef(id: 0, value: 70, label: "")]
             spec.ySuffix = " %"
             spec.height = compact ? 118 : 130
         default:
@@ -234,6 +256,11 @@ enum MetricKind {
             spec.flags = model.flagDates
             spec.contextFlags = model.contextFlagDates
             spec.yDigits = (self == .skinTemp || self == .respRate || self == .per10g) ? 1 : 0
+            if self == .infectionScore {
+                spec.yMin = 0
+                spec.yMax = 100
+                spec.valueUnit = ""
+            }
             if self == .sleep {
                 spec.ySuffix = " h"
                 spec.yMin = 0
@@ -255,6 +282,7 @@ enum MetricKind {
                 LegendItem(color: BIOSTheme.bad, text: "unter 70"),
                 LegendItem(color: BIOSTheme.good, text: "70 bis 180"),
                 LegendItem(color: BIOSTheme.mid, text: "über 180"),
+                LegendItem(color: Color.white.opacity(0.7), text: "Ziel 70 %", mark: .dashed),
             ]
         default:
             var items: [LegendItem] = []
@@ -300,7 +328,7 @@ struct MetricChartCard: View {
                 color: kind.color,
                 value: model.flatMap { kind.value($0) },
                 unit: model.flatMap { kind.value($0) } == nil ? nil : kind.unit,
-                sub: model.flatMap { kind.sub($0) },
+                sub: model.flatMap { kind.sub($0, days: days) },
                 legend: model.map { kind.legend($0) } ?? []
             ) {
                 if let model, model.hasValues {

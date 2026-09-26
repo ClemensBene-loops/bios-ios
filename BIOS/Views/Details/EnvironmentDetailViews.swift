@@ -36,7 +36,7 @@ struct VirenDetailView: View {
                             color: BIOSTheme.viren,
                             value: wienVirus?.pctOfTypicalPeak.map { BIOSFormat.number($0) },
                             unit: wienVirus?.pctOfTypicalPeak == nil ? nil : "% \(wien?.region ?? "Wien")",
-                            sub: wienVirus.map { "\($0.trendFine)\nNiveau \($0.level)" },
+                            sub: VirenDetailView.subText(wienVirus, wien: wienEntry?.model, weeks: weeks),
                             legend: [
                                 LegendItem(color: BIOSTheme.viren, text: "Wien", mark: .line),
                                 LegendItem(color: BIOSTheme.germany, text: "Deutschland", mark: .dashed),
@@ -86,6 +86,21 @@ struct VirenDetailView: View {
         return names.isEmpty ? ["COVID", "Grippe", "RSV"] : names
     }
 
+    /// Fine trend + level, plus the mean of the selected range (Wien).
+    static func subText(_ virus: VirusModel?, wien: SeriesModel?, weeks: Int) -> String? {
+        var lines: [String] = []
+        if let virus {
+            lines.append(virus.trendFine)
+            lines.append("Niveau \(virus.level)")
+        }
+        let values = (wien?.points ?? []).compactMap { $0.value }
+        if !values.isEmpty {
+            let mean = values.reduce(0, +) / Double(values.count)
+            lines.append("Ø \(weeks == 26 ? "6" : "12") Monate \(BIOSFormat.number(mean)) %")
+        }
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
+    }
+
     static func fallbackMetric(_ virus: String) -> String {
         switch virus.lowercased() {
         case "grippe", "influenza": return "ww_influenza"
@@ -103,6 +118,8 @@ struct VirenDetailView: View {
         spec.yMin = 0
         spec.yMax = 100
         spec.ySuffix = " %"
+        spec.valueUnit = "%"
+        spec.seriesLabels = ["wien": "Wien", "de": "Deutschland"]
         spec.refs = [
             ChartRef(id: 0, value: 15, label: "mittel"),
             ChartRef(id: 1, value: 40, label: "hoch"),
@@ -212,6 +229,7 @@ struct PollenAllergenChart: View {
         spec.rangeDays = 11
         spec.height = 140
         spec.yMin = 0
+        spec.valueUnit = "Körner/m³"
         let calendar = Calendar.current
         let measuredPoints = measured?.points ?? []
         var bars = ChartSpec.barPoints(measuredPoints) { _ in BIOSTheme.pollen }
@@ -223,7 +241,8 @@ struct PollenAllergenChart: View {
                 continue
             }
             if firstForecast == nil { firstForecast = date }
-            bars.append(ChartBarPoint(id: 1000 + bars.count, date: date, value: mean, color: BIOSTheme.pollen, opacity: 0.5))
+            bars.append(ChartBarPoint(id: 1000 + bars.count, date: date, value: mean, color: BIOSTheme.pollen, opacity: 0.5,
+                                      label: "Vorhersage"))
         }
         spec.bars = bars
         if let firstForecast {

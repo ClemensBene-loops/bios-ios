@@ -47,6 +47,7 @@ struct GlukoseDetailView: View {
         spec.yMin = 40
         spec.yMax = 300
         spec.height = 150
+        spec.valueUnit = "mg/dL"
         guard let glucose else { return spec }
         let calendar = Calendar.current
         let start: Date
@@ -96,7 +97,11 @@ struct GlucoseSummaryCard: View {
                     StatItem(label: "Ø", value: BIOSFormat.number(glucose.mean), unit: "mg/dL")
                     StatItem(label: "Variabilität (CV)", value: BIOSFormat.number(glucose.cv), unit: "%")
                     StatItem(label: "GMI", value: BIOSFormat.number(glucose.gmi, digits: 1), unit: "%")
-                    StatItem(label: "Nacht-Ø heute", value: BIOSFormat.number(glucose.nightMean), unit: "mg/dL")
+                    StatItem(
+                        label: "Nacht-Ø heute",
+                        value: nightText(glucose.nightMean),
+                        unit: glucose.nightMean == nil ? nil : "mg/dL"
+                    )
                     StatItem(label: "Abdeckung", value: BIOSFormat.number(glucose.coverage24h), unit: "%")
                     StatItem(label: "Quelle", value: glucose.sourcesText)
                 }
@@ -117,6 +122,12 @@ struct GlucoseSummaryCard: View {
         }
         .foregroundStyle(BIOSTheme.text1)
         .biosCard()
+    }
+
+    /// The night window is 00:00 to 06:00: before 06:00 it is still running.
+    private func nightText(_ value: Double?) -> String {
+        if let value { return BIOSFormat.number(value) }
+        return Calendar.current.component(.hour, from: Date()) < 6 ? "läuft" : "n. v."
     }
 
     private func notEvaluableText(_ glucose: GlucoseTileModel) -> String {
@@ -359,6 +370,8 @@ struct LoopDetailView: View {
         spec.yMin = 0
         spec.height = 140
         spec.yDigits = 1
+        spec.valueUnit = "U"
+        spec.valueDigits = 2
         let line = ChartSpec.linePoints(model.points, series: "iob", color: BIOSTheme.insulin)
         spec.lines = line
         spec.area = line

@@ -13,6 +13,8 @@ struct ChartBarPoint: Identifiable {
     let value: Double
     let color: Color
     var opacity: Double = 1
+    /// Name in the scrub bubble ("unter 70", "Vorhersage"), nil = value only.
+    var label: String? = nil
 }
 
 struct ChartLinePoint: Identifiable {
@@ -42,6 +44,13 @@ struct ChartMarker: Identifiable {
     let id: Int
     let date: Date
     let label: String
+}
+
+/// The scrubbed x position: snapped date plus the bubble text.
+struct ChartSelection: Identifiable {
+    let id = 0
+    let date: Date
+    let lines: [String]
 }
 
 struct ChartFlag: Identifiable {
@@ -96,6 +105,11 @@ struct ChartSpec {
     var height: CGFloat = 150
     /// Dots on every line point (short series).
     var showDots: Bool = false
+    /// Unit and digits of values in the scrub bubble.
+    var valueUnit: String = ""
+    var valueDigits: Int = 0
+    /// Display names of line series in the bubble ("wien" -> "Wien").
+    var seriesLabels: [String: String] = [:]
 
     var isEmpty: Bool {
         bars.isEmpty && lines.isEmpty
@@ -143,6 +157,12 @@ struct ChartSpec {
 
 struct BIOSChart: View {
     let spec: ChartSpec
+    /// Snapped date under the finger while scrubbing (nil = not scrubbing).
+    @State private var selected: Date?
+
+    init(spec: ChartSpec) {
+        self.spec = spec
+    }
 
     var body: some View {
         let yDomain = computeYDomain()
@@ -153,6 +173,7 @@ struct BIOSChart: View {
         let refs = spec.refs.filter { yDomain.contains($0.value) }
         let markers = spec.marker.map { [$0] } ?? []
         let dots = dotPoints()
+        let selection = selected.map { [ChartSelection(date: $0, lines: selectionLines($0))] } ?? []
 
         Chart {
             ForEach(bands) { band in
@@ -173,20 +194,25 @@ struct BIOSChart: View {
                 RuleMark(y: .value("Referenz", ref.value))
                     .foregroundStyle(Color.white.opacity(0.28))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                    .annotation(position: .top, alignment: .leading) {
+                    .annotation(position: .top, alignment: .leading, spacing: 2) {
+                        // Pill background: the label stays legible above bars and lines.
                         Text(ref.label)
                             .font(.caption2)
-                            .foregroundStyle(BIOSTheme.text3)
+                            .foregroundStyle(BIOSTheme.text2)
+                            .padding(.horizontal, ref.label.isEmpty ? 0 : 4)
+                            .background(ref.label.isEmpty ? Color.clear : BIOSTheme.card.opacity(0.85), in: Capsule())
                     }
             }
             ForEach(markers) { marker in
                 RuleMark(x: .value("Zeit", marker.date))
                     .foregroundStyle(Color.white.opacity(0.28))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                    .annotation(position: .top, alignment: .leading) {
+                    .annotation(position: .top, alignment: .leading, spacing: 2) {
                         Text(marker.label)
                             .font(.caption2)
-                            .foregroundStyle(BIOSTheme.text3)
+                            .foregroundStyle(BIOSTheme.text2)
+                            .padding(.horizontal, 4)
+                            .background(BIOSTheme.card.opacity(0.85), in: Capsule())
                     }
             }
             ForEach(spec.bars) { bar in
@@ -242,6 +268,18 @@ struct BIOSChart: View {
                 .symbol(flag.isContext ? BasicChartSymbolShape.diamond : BasicChartSymbolShape.circle)
                 .symbolSize(30)
             }
+            ForEach(selection) { item in
+                RuleMark(x: .value("Auswahl", item.date))
+                    .foregroundStyle(Color.white.opacity(0.65))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                    .annotation(
+                        position: .top,
+                        spacing: 0,
+                        overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))
+                    ) {
+                        SelectionBubble(lines: item.lines)
+                    }
+            }
         }
         .chartYScale(domain: yDomain)
         .chartXScale(domain: xDomain)
@@ -270,7 +308,91 @@ struct BIOSChart: View {
                 }
             }
         }
+        .chartOverlay { proxy in
+            GeometryReader { geometry in
+                // Long press, then drag: scrubbing like Whoop. A plain vertical
+                // swipe fails the long press, so the page keeps scrolling.
+                Rectangle()
+                    .fill(Color.clear)
+                    .contentShape(Rectangle())
+                    .gesture(
+                        LongPressGesture(minimumDuration: 0.2)
+                            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .local))
+                            .onChanged { value in
+                                switch value {
+                                case .second(true, let drag?):
+                                    updateSelection(x: drag.location.x, proxy: proxy, geometry: geometry)
+                                default:
+                                    break
+                                }
+                            }
+                            .onEnded { _ in
+                                selected = nil
+                            }
+                    )
+            }
+        }
+        .sensoryFeedback(.selection, trigger: selected)
         .frame(height: spec.height)
+    }
+
+    // MARK: - Scrubbing
+
+    private func updateSelection(x: CGFloat, proxy: ChartProxy, geometry: GeometryProxy) {
+        guard let plotFrame = proxy.plotFrame else { return }
+        let origin = geometry[plotFrame].origin
+        guard let date = proxy.value(atX: x - origin.x, as: Date.self) else { return }
+        let dates = Array(Set(allDates))
+        guard let nearest = dates.min(by: { abs($0.timeIntervalSince(date)) < abs($1.timeIntervalSince(date)) }) else {
+            return
+        }
+        if nearest != selected {
+            selected = nearest
+        }
+    }
+
+    /// Bubble text: date (and hour), then the exact values at that x.
+    private func selectionLines(_ date: Date) -> [String] {
+        var lines = [selectionTitle(date)]
+        let bars = spec.bars.filter { $0.date == date }
+        if bars.count > 1 {
+            for bar in bars {
+                lines.append("\(bar.label ?? "Wert") \(formatValue(bar.value))")
+            }
+        } else if let bar = bars.first {
+            lines.append((bar.label.map { "\($0) " } ?? "") + formatValue(bar.value))
+        }
+        var seen: [String] = []
+        for point in spec.lines where point.date == date {
+            let name = point.series.components(separatedBy: "-").first ?? point.series
+            if seen.contains(name) { continue }
+            seen.append(name)
+            if let label = spec.seriesLabels[name] {
+                lines.append("\(label) \(formatValue(point.value))")
+            } else {
+                lines.append(formatValue(point.value))
+            }
+        }
+        if lines.count == 1 {
+            lines.append("keine Daten")
+        }
+        return lines
+    }
+
+    private func selectionTitle(_ date: Date) -> String {
+        switch spec.unit {
+        case .hour:
+            return "\(BIOSFormat.dayLabel(date)), \(BIOSFormat.twoDigits(Calendar.current.component(.hour, from: date))):00"
+        case .week:
+            return "KW \(Calendar(identifier: .iso8601).component(.weekOfYear, from: date)) · \(BIOSFormat.shortDate(date))"
+        case .day:
+            return BIOSFormat.dayLabel(date)
+        }
+    }
+
+    private func formatValue(_ value: Double) -> String {
+        let number = BIOSFormat.number(value, digits: spec.valueDigits)
+        return spec.valueUnit.isEmpty ? number : "\(number) \(spec.valueUnit)"
     }
 
     // MARK: - Scales
@@ -427,6 +549,31 @@ struct BIOSChart: View {
             lastBySeries[name] = point
         }
         return Array(lastBySeries.values)
+    }
+}
+
+/// Scrub bubble: date on top, values below.
+struct SelectionBubble: View {
+    let lines: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            ForEach(Array(lines.enumerated()), id: \.offset) { entry in
+                Text(entry.element)
+                    .font(entry.offset == 0 ? .caption2 : .caption.weight(.semibold))
+                    .foregroundStyle(entry.offset == 0 ? BIOSTheme.text2 : BIOSTheme.text1)
+                    .monospacedDigit()
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(Color(hex: 0x2C2F37), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+        )
+        .accessibilityElement(children: .combine)
     }
 }
 
