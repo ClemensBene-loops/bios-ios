@@ -197,8 +197,7 @@ enum MetricKind {
             }
             let count = values.count == 1 ? "1 Messung" : "\(values.count) Messungen"
             let high = values.max().map { " · max \(BIOSFormat.number($0, digits: 1)) °C" } ?? ""
-            return first + "
-" + count + high
+            return first + "\n" + count + high
         }
         let total = model.points.count
         var first = "Ø \(model.days ?? days) Tage"

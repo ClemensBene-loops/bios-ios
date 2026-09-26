@@ -18,6 +18,12 @@ on:
 permissions:
   contents: read
 
+# Explicit bash = `bash --noprofile --norc -eo pipefail`: without it the runner
+# uses `bash -e` and `xcodebuild ... | tee` hides a failed build (job green).
+defaults:
+  run:
+    shell: bash
+
 concurrency:
   group: compile-check-${{ github.ref }}
   cancel-in-progress: true
