@@ -162,15 +162,25 @@ final class EventStore: ObservableObject {
         }
     }
 
-    /// Dashboard `events` block: fills today/yesterday before the first `/v1/events` load.
+    /// Dashboard `events` block (read fresh by the server on every request):
+    /// authoritative for the last 14 days including today. Pending local
+    /// changes still win in `isMarked`.
     func seed(from events: DashboardEventsModel?) {
-        guard let events, fetchedAt == nil else { return }
+        guard let events else { return }
+        let calendar = Calendar.current
         let now = Date()
         let today = Self.dayString(now)
-        let yesterday = Self.dayString(Calendar.current.date(byAdding: .day, value: -1, to: now) ?? now)
-        for day in events.alcoholRecent {
-            confirmed.insert(day)
+        let yesterday = Self.dayString(calendar.date(byAdding: .day, value: -1, to: now) ?? now)
+        var updated = confirmed
+        for offset in 0..<14 {
+            if let date = calendar.date(byAdding: .day, value: -offset, to: now) {
+                updated.remove(Self.dayString(date))
+            }
         }
+        for day in events.alcoholRecent {
+            updated.insert(day)
+        }
+        confirmed = updated
         if let marked = events.todayMarked {
             if marked { confirmed.insert(today) } else { confirmed.remove(today) }
         }
