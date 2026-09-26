@@ -23,10 +23,10 @@ repo (`api/server.py`, `api/dashboard.py`, `api/series.py`, `api/intake.py`,
 | Version | `MARKETING_VERSION` 2.0 (`project.yml`), build number = latest TestFlight build + 1 |
 | GitHub | `ClemensBene-loops/bios-ios` (public, organization on the free plan) |
 
-Status (2026-09-26): v2 lives on branch `v2-dashboard`. Build `2.0 (3)` is installed
-via TestFlight; the next build with the build-3 feedback (chart scrubbing, range
-means, infection score ring, blood pressure, quick log) comes from the same branch.
-`main` still holds v1 (build `1.0 (2)`, PR #1) until `v2-dashboard` is merged.
+Status (2026-09-26): v2 lives on branch `v2-dashboard` (TestFlight builds `2.0 (3)`
+and later: charts, infection score, blood pressure, quick log, Gesundheits-Score,
+Live Activity, Körperkarte). `main` still holds v1 (build `1.0 (2)`, PR #1) until
+`v2-dashboard` is merged.
 
 This repo is **public**: no secrets, no server URL, no IPA and no personal health
 data are ever committed or uploaded as workflow artifacts. Sample data in the code
@@ -38,15 +38,19 @@ Four tabs (`TabView`), dark mode first, SF Symbols, colors always paired with a
 symbol or text, Dynamic Type and VoiceOver labels, no third-party dependencies
 (Swift Charts is Apple's).
 
-- **Heute**: hero card with the infection score ring (0 to 100, server levels
-  niedrig/mittel/hoch), status line ("Alles im Rahmen", "Frühzeichen",
-  "Infektmuster Tag 3") and deviation chips of the day (resting HR, HRV, skin
-  temperature, respiration, glucose and insulin as context). Below: quick status
-  row, outlook card and a tile grid (viruses Wien, pollen, glucose, recovery/sleep,
-  insulin, Loop, blood pressure when there are readings). A tap on a tile opens its
-  detail view with charts. "Stand" line at the bottom.
-- **Körper**: Whoop, glucose and insulin in detail, charts with the personal baseline
-  band, 7/28 day switch shared with the detail screens.
+- **Heute**: Gesundheits-Score card (see below), Körperkarte card, compact
+  Infekt-Check (score, status pill, 7-day sparkline, temperature) and "Deine
+  Routine". A server without the `health` block gets the build 5 layout: hero card
+  with the infection score ring (0 to 100, server levels niedrig/mittel/hoch),
+  status line ("Alles im Rahmen", "Frühzeichen", "Infektmuster Tag 3") and
+  deviation chips of the day, plus the Körperkarte card and the quick status row.
+  Below, in both layouts: outlook card and a tile grid (viruses Wien,
+  pollen, glucose, recovery/sleep, insulin, Loop, blood pressure when there are
+  readings). A tap on a tile opens its detail view with charts. "Stand" line at
+  the bottom.
+- **Körper**: Körperkarte on top (see below), then Whoop, glucose and insulin in
+  detail, charts with the personal baseline band, 7/28 day switch shared with the
+  detail screens.
 - **Umwelt**: viruses in wastewater (Wien, Germany) with fine trend arrows, pollen
   forecast for the next 4 days, allergy block, season hints.
 - **Mehr**: push status (permission, APNs registration, token upload, last push),
@@ -55,12 +59,97 @@ symbol or text, Dynamic Type and VoiceOver labels, no third-party dependencies
 - **Charts** (Swift Charts): scrubbing with a dashed rule and the value, header
   numbers follow the selected range (mean over 7/28 days, "gestern" small), episode
   days as red dots, context days (glucose/insulin up) as indigo diamonds.
-- **Offline**: `/v1/dashboard` and every loaded series are cached as raw JSON in
-  Application Support (`DiskCache`); offline the app shows the last state with a
-  "wifi.slash" hint. Pull to refresh reloads the dashboard and the loaded series.
+- **Offline**: `/v1/dashboard`, `/v1/bodymap` and every loaded series are cached as
+  raw JSON in Application Support (`DiskCache`); offline the app shows the last
+  state with a "wifi.slash" hint. Pull to refresh reloads the dashboard, the body
+  map and the loaded series.
 - **Push registration** (unchanged from v1): on every launch the app asks for
   permission, registers with APNs and uploads the token (`POST /v1/devices`) with
   retry and backoff; banners also show in the foreground.
+
+### Gesundheits-Score
+
+Dashboard block `health` (server `analysis/health_score.py`, contract in
+`docs/API_v1.md` of the BIOS repo, section "Gesundheits-Score"). Six pillars with
+server weights: Schlaf 20, Erholung 20, Stoffwechsel 20, Kreislauf 10, Abwehr 15,
+Routine 15; missing pillars are renormalized, the total is `null` below half the
+weight. The app renders only what the server sends: score, level word
+(`sehr gut` >= 80, `gut` >= 65, `mittel` >= 50, `niedrig`), headline and subline,
+`delta_week` as a pill ("+4 zur Vorwoche"), and per pillar score, trend and a
+German reason (Kreislauf names its parts: resting HR level, training minutes,
+blood pressure). Observation only; the score never hides a warning.
+
+- **Heute card** (`HealthScoreCard`): ring 138 pt / line 11 pt with number and
+  level word, delta pill, freshness line, pillar grid (3 columns). Tap opens the
+  detail.
+- **Detail** (`HealthDetailView`, route `gesundheit`): ring 130 pt / line 10 pt,
+  pillar list with bars, trends and reasons, "keine Daten" for a missing pillar.
+- **Live Activity**: the same ring on the lock screen (56 / 4.5) and in the
+  Dynamic Island (44 / 3.5) from `pillars_mini`.
+
+**Ring geometry.** One geometry for every ring, in `Shared/HealthRing.swift`
+(compiled into app and widget extension, no copies per view): six equal arcs in
+the server pillar order (`ORDER`: Schlaf, Erholung, Stoffwechsel, Kreislauf,
+Abwehr, Routine), start at 12 o'clock, clockwise. `r` is the center line of the
+stroke (`(size − lineWidth) / 2`), a fixed visible gap of 3 pt becomes the angle
+`g = 3 pt / r`, and the round-cap overhang `c = (lineWidth / 2) / r` is taken off
+both ends so every cap ends inside its own arc:
+
+```
+span     = 360° / 6
+a0       = i · span + g/2 + c
+a1       = (i + 1) · span − g/2 − c
+fill_end = a0 + (a1 − a0) · score / 100
+```
+
+If `a1 <= a0` (small radius, thick line) the arc uses a butt cap over
+`i · span + g/2 ... (i + 1) · span − g/2`. Every arc has a dim background track
+from `a0` to `a1` and a fill proportional to the pillar score inside its own arc;
+value 0 shows the track only, a missing pillar a grey dashed track. Checked
+numerically for all four sizes in the design mockup: the smallest distance
+between two drawn arcs including caps is 2.97 pt, so no two arcs touch (build 6
+overlapped at the top between Routine and Schlaf).
+
+### Körperkarte (body map)
+
+A 2D outline figure (dark, thin cream line, front and back view) whose regions
+light up by the current state; first cut without lab values. Data from
+`GET /v1/bodymap` (server `analysis/bodymap.py`, `api/bodymap.py`), the Heute
+card from the dashboard block `bodymap`. Observation, no diagnosis: no new alarm
+rule, nothing is pushed.
+
+- **Views**: `BodyMapSection` on top of the Körper tab (figure with a soft glow
+  per status, symbol badge per region, Vorne/Hinten toggle, legend, "Stand"), the
+  region list below the figure (sorted auffällig, beobachten, ok, keine Daten; the
+  accessible alternative to the figure), `BodyMapRegionSheet` on tap (status with
+  reason, values with delta or the server text, buttons to the existing detail
+  screens, Dynamic Type), and `BodyMapTodayCard` on Heute under the
+  Gesundheits-Score (mini figure, "n beobachten · n auffällig", top reason; tap
+  opens the Körper tab). VoiceOver label per region, e.g. "Lunge, beobachten:
+  Atemfrequenz erhöht".
+- **Regions**: `kopf_schlaf`, `abwehr`, `lunge`, `herz`, `leber`, `stoffwechsel`,
+  `niere`, `muskeln`, `knochen` (`niere`, `knochen` on the back). `leber`, `niere`
+  and `knochen` are neutral ("noch keine Daten", until lab values or DEXA exist).
+- **States**: `ok`, `beobachten`, `auffaellig`, `keine_daten`, always shown with
+  symbol and word (`checkmark.circle`, `eye`, `exclamationmark.triangle`,
+  `minus.circle`), never by color alone; keine Daten is grey and dashed.
+  Thresholds, labels and reasons come from the server.
+- **Tolerant decoding** (`BIOS/Models/BodyMapModels.swift`): an unknown or missing
+  status becomes `keine_daten`, missing fields get defaults, duplicate region ids
+  are dropped, unknown detail links are dropped, invalid or missing shapes and
+  anchors fall back to the bundled layout. HTTP 404 (older server without the
+  endpoint) shows "Körperkarte noch nicht verfügbar" instead of an error; offline
+  the last cached map is shown (`BodyMapStore`, DiskCache key `bodymap`).
+- **Layout**: normalized coordinates 0 to 1 in a box width:height = 0.5 (x from
+  the viewer's left, the front view shows the left body side on the right). The
+  constants in `BIOS/Views/BodyMap/BodyMapShapes.swift` (`BodyMapLayout`,
+  `version = 1`) are identical to `docs/fixtures/bodymap_layout.json` in the BIOS
+  repo (`analysis.bodymap.LAYOUT`, checked by its tests). The outline is drawn in
+  the app (open polylines smoothed with uniform Catmull-Rom), region ellipses and
+  badge anchors come from the server with the bundled layout as fallback. No image
+  assets.
+- **One place for changes**: colors, opacities, sizes and texts in
+  `BIOS/Views/BodyMap/BodyMapStyle.swift`, geometry in `BodyMapShapes.swift`.
 
 ### Quick log ("+" on Heute)
 
@@ -117,13 +206,9 @@ minimal = "b" mark with a status dot (the usual state next to Loop), compact =
 mark + score, expanded with "Genommen" / "Später" (`LiveActivityIntent`, runs in
 the app, logs the intake through the offline queue).
 
-**Health ring.** One geometry for every ring (Heute hero 138/11, score detail
-130/10, lock screen 56/4.5, island 44/3.5), in `Shared/HealthRing.swift`: six equal
-arcs in the server pillar order (Schlaf, Erholung, Stoffwechsel, Kreislauf, Abwehr,
-Routine), start at 12 o'clock, clockwise, a fixed 3 pt gap (`g = 3 pt / r`) and the
-round-cap overhang `c = (lineWidth / 2) / r` taken off both ends
-(`a0 = i·span + g/2 + c`, `a1 = (i+1)·span − g/2 − c`, butt cap if `a1 <= a0`), so
-no two arcs touch. Value 0 = dim track only, missing pillar = grey dashed track.
+**Health ring.** The lock screen (56/4.5) and island (44/3.5) rings use the shared
+geometry in `Shared/HealthRing.swift`, the same as the Heute hero (138/11) and the
+score detail (130/10); see "Gesundheits-Score" above.
 
 **Flow over a day.**
 
@@ -197,15 +282,17 @@ keys in its contract test.
 - `BIOS/App/`: `BIOSApp.swift`, `AppDelegate.swift` (permission, APNs registration,
   categories, token upload), `AppState.swift`, `Router.swift` (tabs, detail routes,
   push deep links), stores `DashboardStore`, `SeriesStore`, `EventStore`, `LogStores`
-  (supplements, medications, offline queues), `AlcoholIntents.swift` (App Intents).
+  (supplements, medications, offline queues), `BodyMapStore` (body map + cache),
+  `AlcoholIntents.swift` (App Intents).
 - `BIOS/Networking/`: `APIClient.swift` (+ `APIClient+Logs.swift`; Bearer auth, retry),
   `APIModels.swift`, `DiskCache.swift` (offline cache), `JSONValue+Access.swift`.
 - `BIOS/Models/`: dashboard, series, score and blood pressure models (lenient
   decoding: fields optional, missing tiles are fine), `Formatting.swift` (German
   number and date formats), `SampleData.swift` (invented, `#if DEBUG`).
 - `BIOS/Views/`: `RootView` (TabView), `Heute/` (hero, tiles), `KoerperView`,
-  `UmweltView`, `MehrView`, `Details/`, `Charts/`, `QuickLogViews`, `AlcoholViews`,
-  `BloodPressureViews`, `Theme`, `Components`.
+  `UmweltView`, `MehrView`, `Details/`, `Charts/`, `BodyMap/` (`BodyMapShapes`
+  layout and paths, `BodyMapStyle` colors and texts, `BodyMapView`), `QuickLogViews`,
+  `AlcoholViews`, `BloodPressureViews`, `Theme`, `Components`.
 - `BIOS/Config/AppConfig.swift`: reads the build-time config from Info.plist.
 - `BIOSWidgets/`: widget extension (Live Activity views, `Info.plist`).
 - `Shared/`: compiled into the app and the extension: `BIOSActivityAttributes`
@@ -345,7 +432,8 @@ limit) or 503.
 | `GET /health` | no auth, `{"ok": true}` |
 | `POST /v1/devices`, `DELETE /v1/devices/{token}` | APNs token upload (unchanged from v1) |
 | `GET /v1/summary` | v1 screen (build 2), kept unchanged on the server |
-| `GET /v1/dashboard` | everything on Heute, Umwelt and Mehr: `infection` (hero, score, chips), `outlook`, `tiles`, `environment`, `freshness`, `push`, `events`, `intake`, `schema_version` |
+| `GET /v1/dashboard` | everything on Heute, Umwelt and Mehr: `health` (Gesundheits-Score), `infection` (hero, score, chips), `bodymap` (Heute card), `vitals`, `outlook`, `tiles`, `environment`, `freshness`, `push`, `events`, `intake`, `schema_version` |
+| `GET /v1/bodymap` | Körperkarte: `regions[]` (`id`, `label`, `view`, `status`, `reason`, `neutral`, `anchor`, `shapes[]`, `metrics[]`, `links[]`), `statuses[]` legend, `summary`, `layout_version`, `aspect`; contract in `docs/API_v1.md` (BIOS repo), section "Körperkarte", example `docs/fixtures/bodymap.json` |
 | `GET /v1/series?metric=...&days=...[&source=...]` | chart data: points, baseline band, reference lines, `flags`, `context_flags` |
 | `POST/DELETE/GET /v1/events` | alcohol marks per day |
 | `GET/PUT /v1/supplements`, `POST/GET /v1/intake` | supplement regimen and daily ticks |
