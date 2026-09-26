@@ -399,6 +399,11 @@ final class LiveActivityController: ObservableObject {
                 }
             }
             state.pillarsMini = pillars.contains { $0 != nil } ? pillars : nil
+            // Server list in ring order wins (`health.pillars_mini`).
+            let mini = health.list("pillars_mini")
+            if mini.count == BIOSActivityColors.pillars.count {
+                state.pillarsMini = mini.map { $0.finiteNumber }
+            }
         }
         if state.healthScore == nil, let current {
             state.healthScore = current.healthScore
