@@ -5,7 +5,8 @@ enum RangeSetting {
     static let key = "bios.rangeDays"
 }
 
-/// Tab "Körper": Whoop, glucose and insulin charts with baseline bands.
+/// Tab "Körper": Körperkarte on top (BodyMapSection, own store), then Whoop,
+/// glucose and insulin charts with baseline bands.
 ///
 /// Scrolling: a LazyVStack builds the chart cards only near the screen; every
 /// card observes only its own series slot (SeriesStore) and the charts skip
@@ -17,6 +18,8 @@ struct KoerperView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 12) {
+                BodyMapSection()
+
                 RangePicker(days: $days)
 
                 SectionHeader(title: "Whoop", route: .recovery)
@@ -45,6 +48,7 @@ struct KoerperView: View {
         .navigationTitle("Körper")
         .refreshable {
             await DashboardStore.shared.refresh(force: true)
+            await BodyMapStore.shared.refresh(force: true)
             await SeriesStore.shared.refreshLoaded()
         }
     }

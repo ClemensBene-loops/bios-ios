@@ -114,6 +114,8 @@ struct DashboardModel {
     let health: HealthModel?
     /// Last app-entered temperature / blood pressure (optional).
     let vitals: DashboardVitalsModel?
+    /// Körperkarte summary for the Heute card (optional; nil hides the card).
+    let bodymap: BodyMapSummaryModel?
 
     /// Major schema version this app understands.
     static let supportedSchema = 1
@@ -131,6 +133,7 @@ struct DashboardModel {
         intake = json.obj("intake").map { DashboardIntakeModel(json: $0) }
         health = HealthModel(json: json.obj("health"))
         vitals = json.obj("vitals").map { DashboardVitalsModel(json: $0) }
+        bodymap = json.obj("bodymap").map { BodyMapSummaryModel(json: $0) }
 
         let tiles = json.obj("tiles")
         if let wien = tiles?.obj("viruses_wien") {

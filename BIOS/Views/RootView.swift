@@ -62,6 +62,7 @@ struct RootView: View {
         .animation(.easeInOut(duration: 0.25), value: eventStore.toast)
         .task {
             await dashboardStore.refresh()
+            await BodyMapStore.shared.refresh()
             await eventStore.flush()
             await eventStore.refresh()
             await SupplementStore.shared.flush()

@@ -78,6 +78,11 @@ struct APIClient: Sendable {
         try await getJSON(path: ["v1", "dashboard"])
     }
 
+    /// `GET /v1/bodymap`: 2D body map (regions, status, metrics, links).
+    func fetchBodymap() async throws -> JSONValue {
+        try await getJSON(path: ["v1", "bodymap"])
+    }
+
     /// `GET /v1/series?metric=...&days=...[&source=...]`: one logical time series.
     func fetchSeries(metric: String, days: Int, source: String? = nil) async throws -> JSONValue {
         var query = [

@@ -47,6 +47,9 @@ struct HeuteView: View {
                 if let health = dashboard?.health {
                     // Design A: Gesundheits-Score, compact Infekt-Check, Routine.
                     HealthScoreCard(health: health)
+                    if let bodymap = dashboard?.bodymap {
+                        BodyMapTodayCard(summary: bodymap)
+                    }
                     InfektCheckCompactCard(infection: dashboard?.infection, vitals: dashboard?.vitals)
                     RoutineCard { target in
                         quickLog = target
@@ -54,6 +57,9 @@ struct HeuteView: View {
                 } else {
                     // Server without `health`: the Build 5 layout.
                     HeroCard(infection: dashboard?.infection, glucoseTile: dashboard?.glucose)
+                    if let bodymap = dashboard?.bodymap {
+                        BodyMapTodayCard(summary: bodymap)
+                    }
                     QuickStatusCard { target in
                         quickLog = target
                     }
@@ -91,6 +97,7 @@ struct HeuteView: View {
         .refreshable {
             await dashboardStore.refresh(force: true)
             await seriesStore.refreshLoaded()
+            await BodyMapStore.shared.refresh(force: true)
         }
         .sheet(item: $quickLog) { target in
             QuickLogSheet(start: target)

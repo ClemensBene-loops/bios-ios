@@ -28,6 +28,7 @@ struct BIOSApp: App {
                     appDelegate.refreshAuthorizationIfNeeded()
                     Task { @MainActor in
                         await DashboardStore.shared.refresh()
+                        await BodyMapStore.shared.refresh()
                         // Offline queue of alcohol marks: retry on every foreground.
                         await EventStore.shared.flush()
                         await SupplementStore.shared.flush()
