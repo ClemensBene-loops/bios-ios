@@ -96,8 +96,9 @@ struct BIOSActivityState: Codable, Hashable, Sendable {
 
     var healthScore: Int?
     var healthLevel: String?
-    /// Six pillar scores 0...100 in ring order Schlaf, Erholung, Stoffwechsel,
-    /// Kreislauf, Abwehr, Routine (null = no data, empty slot).
+    /// Six pillar scores 0...100 in ring order (HealthPillarPalette.order:
+    /// Schlaf, Erholung, Stoffwechsel, Kreislauf, Abwehr, Routine), null = no
+    /// data (grey dashed slot).
     var pillarsMini: [Double?]?
     var mode: BIOSActivityMode = .normal
     var infectionScore: Int?
@@ -325,28 +326,7 @@ enum BIOSActivityColors {
     static let text2 = Color(activityHex: 0xA7AEBA)
     /// Banner background (dark, slightly green like the mockup).
     static let banner = Color(activityHex: 0x1A2420)
-
-    /// Ring order clockwise from the top: key and color.
-    static let pillars: [(key: String, color: Color)] = [
-        ("sleep", Color(activityHex: 0xB39DFA)),
-        ("recovery", Color(activityHex: 0x68D8CB)),
-        ("metabolism", Color(activityHex: 0x5AA7FF)),
-        ("circulation", Color(activityHex: 0x8EC7A4)),
-        ("immune", Color(activityHex: 0xFFD23F)),
-        ("routine", Color(activityHex: 0xD6C28C)),
-    ]
-
-    /// Ring key for a server pillar key or German label ("Schlaf" -> "sleep").
-    static func pillarKey(_ key: String, label: String? = nil) -> String {
-        let text = (key + " " + (label ?? "")).lowercased()
-        if text.contains("sleep") || text.contains("schlaf") { return "sleep" }
-        if text.contains("recover") || text.contains("erholung") { return "recovery" }
-        if text.contains("metab") || text.contains("stoffwechsel") || text.contains("glucose") { return "metabolism" }
-        if text.contains("circ") || text.contains("kreislauf") || text.contains("cardio") { return "circulation" }
-        if text.contains("immun") || text.contains("abwehr") || text.contains("infect") { return "immune" }
-        if text.contains("routine") || text.contains("habit") { return "routine" }
-        return key
-    }
+    // Pillar order and colors: HealthPillarPalette (Shared/HealthRing.swift).
 }
 
 extension Color {

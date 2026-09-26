@@ -405,19 +405,18 @@ final class LiveActivityController: ObservableObject {
         if let health = json?.obj("health") {
             state.healthScore = (health.double("score") ?? health.double("value")).map { Int($0.rounded()) }
             state.healthLevel = health.str("level") ?? health.str("level_text")
-            var pillars = [Double?](repeating: nil, count: BIOSActivityColors.pillars.count)
+            var pillars = [Double?](repeating: nil, count: HealthPillarPalette.pillars.count)
             for pillar in health.list("pillars") {
                 guard let key = pillar.str("key") ?? pillar.str("id"),
                       let score = pillar.double("score") ?? pillar.double("value") else { continue }
-                let canonical = BIOSActivityColors.pillarKey(key, label: pillar.str("label"))
-                if let index = BIOSActivityColors.pillars.firstIndex(where: { $0.key == canonical }) {
+                if let index = HealthPillarPalette.index(of: key, label: pillar.str("label")) {
                     pillars[index] = score
                 }
             }
             state.pillarsMini = pillars.contains { $0 != nil } ? pillars : nil
             // Server list in ring order wins (`health.pillars_mini`).
             let mini = health.list("pillars_mini")
-            if mini.count == BIOSActivityColors.pillars.count {
+            if mini.count == HealthPillarPalette.pillars.count {
                 state.pillarsMini = mini.map { $0.finiteNumber }
             }
         }

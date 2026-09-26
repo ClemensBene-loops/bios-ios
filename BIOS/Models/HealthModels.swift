@@ -55,45 +55,24 @@ struct HealthPillar: Identifiable {
     }
 
     /// Design A colors per pillar (server `color` wins when it is a hex value).
+    /// Palette, order and key mapping live in Shared/HealthRing.swift
+    /// (HealthPillarPalette), shared with the Live Activity.
     static func color(key: String, label: String, hex: String?) -> Color {
         if let hex, let value = UInt32(hex.trimmingCharacters(in: CharacterSet(charactersIn: "#")), radix: 16), hex.count >= 6 {
             return Color(hex: value)
         }
-        switch canonical(key, label) {
-        case "sleep": return Color(hex: 0xB39DFA)
-        case "recovery": return Color(hex: 0x68D8CB)
-        case "metabolism": return Color(hex: 0x5AA7FF)
-        case "circulation": return Color(hex: 0x8EC7A4)
-        case "immune": return Color(hex: 0xFFD23F)
-        case "routine": return Color(hex: 0xD6C28C)
-        default: return BIOSTheme.text2
-        }
+        return HealthPillarPalette.color(key, label: label) ?? BIOSTheme.text2
     }
 
     /// Order of the ring and grid: Schlaf, Erholung, Stoffwechsel, Kreislauf, Abwehr, Routine.
-    static let order = ["sleep", "recovery", "metabolism", "circulation", "immune", "routine"]
+    static var order: [String] { HealthPillarPalette.order }
 
     static func canonical(_ key: String, _ label: String) -> String {
-        let text = (key + " " + label).lowercased()
-        if text.contains("sleep") || text.contains("schlaf") { return "sleep" }
-        if text.contains("recover") || text.contains("erholung") { return "recovery" }
-        if text.contains("metab") || text.contains("stoffwechsel") || text.contains("glucose") { return "metabolism" }
-        if text.contains("circ") || text.contains("kreislauf") || text.contains("cardio") { return "circulation" }
-        if text.contains("immun") || text.contains("abwehr") || text.contains("infect") { return "immune" }
-        if text.contains("routine") || text.contains("habit") { return "routine" }
-        return key
+        HealthPillarPalette.canonical(key, label: label)
     }
 
     static func defaultLabel(_ key: String) -> String {
-        switch canonical(key, "") {
-        case "sleep": return "Schlaf"
-        case "recovery": return "Erholung"
-        case "metabolism": return "Stoffwechsel"
-        case "circulation": return "Kreislauf"
-        case "immune": return "Abwehr"
-        case "routine": return "Routine"
-        default: return key
-        }
+        HealthPillarPalette.defaultLabel(key)
     }
 }
 

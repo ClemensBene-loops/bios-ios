@@ -186,9 +186,9 @@ private struct InfoColumn: View {
 
 // MARK: - Health ring (six pillar segments)
 
-/// Mini ring: six equal slots clockwise from the top (Schlaf, Erholung,
-/// Stoffwechsel, Kreislauf, Abwehr, Routine), each filled by its pillar score
-/// on a dim track; the score and the level word in the middle.
+/// Mini ring: the shared six-arc ring (Shared/HealthRing.swift) with
+/// pillar-tinted tracks, the score and the level word in the middle.
+/// `diameter` is the center line circle of the stroke.
 struct HealthRingView: View {
     let state: BIOSActivityState
     let diameter: CGFloat
@@ -196,26 +196,9 @@ struct HealthRingView: View {
     let numberSize: CGFloat
     let showsLevel: Bool
 
-    private static let slot = 1.0 / 6.0
-    private static let gap = 0.03
-
     var body: some View {
         ZStack {
-            ForEach(Array(BIOSActivityColors.pillars.enumerated()), id: \.offset) { index, pillar in
-                let start = Double(index) * Self.slot + Self.gap / 2
-                let length = Self.slot - Self.gap
-                let fraction = min(max((state.pillar(index) ?? 0) / 100, 0), 1)
-                Circle()
-                    .trim(from: start, to: start + length)
-                    .stroke(pillar.color.opacity(0.18), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-                if fraction > 0 {
-                    Circle()
-                        .trim(from: start, to: start + length * fraction)
-                        .stroke(pillar.color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-                }
-            }
-            .rotationEffect(.degrees(-90))
-            .frame(width: diameter, height: diameter)
+            HealthSegmentRing(values: state.pillarsMini ?? [], radius: diameter / 2, lineWidth: lineWidth, track: .tinted)
 
             VStack(spacing: -3) {
                 Text(state.healthScoreText)

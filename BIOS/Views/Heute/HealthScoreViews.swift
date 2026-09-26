@@ -4,27 +4,24 @@ import SwiftUI
 // colors, number + level word, week delta pill, pillar grid (Heute) and the
 // pillar list with bars, trends and reasons (detail). Observation only.
 
-/// Ring geometry: six slots (60° each, small gaps); each slot is filled in
-/// its pillar color by the pillar score, the rest is a dark track.
+/// Ring input in the shared ring order (HealthPillarPalette): score per slot
+/// (nil = pillar missing, dashed grey) and color per slot.
 enum HealthRing {
-    static let gap = 0.018
-
-    struct Slot {
-        let color: Color
-        let fraction: Double
+    static func values(_ health: HealthModel) -> [Double?] {
+        HealthPillar.order.map { key in pillar(health, key)?.score }
     }
 
-    /// Always six slots in the design order; a missing pillar stays a track.
-    static func slots(_ health: HealthModel) -> [Slot] {
-        HealthPillar.order.map { key in
-            let pillar = health.pillars.first { HealthPillar.canonical($0.key, $0.label) == key }
-            let fraction = Swift.max(0, Swift.min(1, (pillar?.score ?? 0) / 100))
-            return Slot(color: pillar?.color ?? HealthPillar.color(key: key, label: "", hex: nil), fraction: fraction)
-        }
+    static func colors(_ health: HealthModel) -> [Color] {
+        HealthPillarPalette.pillars.map { entry in pillar(health, entry.key)?.color ?? entry.color }
+    }
+
+    private static func pillar(_ health: HealthModel, _ key: String) -> HealthPillar? {
+        health.pillars.first { HealthPillar.canonical($0.key, $0.label) == key }
     }
 }
 
-/// Ring with number and level word; only the arcs rotate (start at 12 o'clock).
+/// Ring with number and level word. Geometry: Shared/HealthRing.swift; the
+/// stroke's outer edge touches the frame (center line radius (size - lineWidth) / 2).
 struct HealthRingView: View {
     let health: HealthModel
     var size: CGFloat = 150
@@ -32,8 +29,8 @@ struct HealthRingView: View {
 
     var body: some View {
         ZStack {
-            HealthArcs(health: health, lineWidth: lineWidth)
-                .rotationEffect(.degrees(-90))
+            HealthSegmentRing(values: HealthRing.values(health), colors: HealthRing.colors(health),
+                              radius: (size - lineWidth) / 2, lineWidth: lineWidth, track: .neutral)
             VStack(spacing: 0) {
                 Text(BIOSFormat.number(health.score))
                     .font(.system(size: size * 0.36, weight: .semibold, design: .rounded))
@@ -50,31 +47,6 @@ struct HealthRingView: View {
         .frame(width: size, height: size)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Gesundheits-Score \(BIOSFormat.number(health.score)) von 100, \(health.levelWord)")
-    }
-}
-
-private struct HealthArcs: View {
-    let health: HealthModel
-    let lineWidth: CGFloat
-
-    var body: some View {
-        let slots = HealthRing.slots(health)
-        ZStack {
-            ForEach(slots.indices, id: \.self) { index in
-                let slot = slots[index]
-                let start = Double(index) / 6 + HealthRing.gap / 2
-                let end = Double(index + 1) / 6 - HealthRing.gap / 2
-                Circle()
-                    .trim(from: start, to: end)
-                    .stroke(Color.white.opacity(0.08), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-                if slot.fraction > 0 {
-                    Circle()
-                        .trim(from: start, to: start + (end - start) * slot.fraction)
-                        .stroke(slot.color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-                }
-            }
-        }
-        .padding(lineWidth / 2)
     }
 }
 
@@ -500,10 +472,10 @@ struct PillarRow: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(pillar.color)
                 }
-                Text(BIOSFormat.number(pillar.score))
-                    .font(.title3.weight(.semibold))
+                Text(pillar.score == nil ? "keine Daten" : BIOSFormat.number(pillar.score))
+                    .font(pillar.score == nil ? Font.subheadline : Font.title3.weight(.semibold))
                     .monospacedDigit()
-                    .foregroundStyle(pillar.color)
+                    .foregroundStyle(pillar.score == nil ? BIOSTheme.text2 : pillar.color)
             }
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
@@ -523,6 +495,8 @@ struct PillarRow: View {
         }
         .padding(.vertical, 12)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(pillar.label) \(BIOSFormat.number(pillar.score)) von 100, \(pillar.trendWord). \(pillar.reason ?? "")")
+        .accessibilityLabel(pillar.score == nil
+            ? "\(pillar.label), keine Daten. \(pillar.reason ?? "")"
+            : "\(pillar.label) \(BIOSFormat.number(pillar.score)) von 100, \(pillar.trendWord). \(pillar.reason ?? "")")
     }
 }
