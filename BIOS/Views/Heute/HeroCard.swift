@@ -33,28 +33,7 @@ struct HeroCard: View {
             }
 
             HStack(alignment: .center, spacing: 16) {
-                ZStack {
-                    RecoveryRing(value: infection?.recovery, color: zone.color, lineWidth: 11)
-                        .frame(width: 112, height: 112)
-                    VStack(spacing: 2) {
-                        HStack(alignment: .firstTextBaseline, spacing: 1) {
-                            Text(infection?.recovery.map { BIOSFormat.number($0) } ?? "n. v.")
-                                .font(.title.bold())
-                                .monospacedDigit()
-                                .minimumScaleFactor(0.6)
-                                .lineLimit(1)
-                            if infection?.recovery != nil {
-                                Text("%")
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(BIOSTheme.text2)
-                            }
-                        }
-                        Text("Recovery")
-                            .font(.caption2.weight(.medium))
-                            .foregroundStyle(BIOSTheme.text2)
-                    }
-                    .frame(width: 90)
-                }
+                HeroRing(infection: infection, size: 112, lineWidth: 11)
 
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -73,6 +52,16 @@ struct HeroCard: View {
                         Text("Wird vom Server geladen")
                             .font(.subheadline)
                             .foregroundStyle(BIOSTheme.text2)
+                    }
+                    if let env = infection?.envContext {
+                        Label {
+                            Text(env)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } icon: {
+                            Image(systemName: "microbe")
+                        }
+                        .font(.caption)
+                        .foregroundStyle(BIOSTheme.text3)
                     }
                 }
                 Spacer(minLength: 0)
@@ -167,14 +156,103 @@ struct HeroCard: View {
     private var accessibilityText: String {
         guard let infection else { return "Infekt-Check, noch keine Daten" }
         var parts = ["Infekt-Check: \(infection.headline)"]
-        if let recovery = infection.recovery {
+        if let score = infection.score {
+            parts.append("Infekt-Score \(BIOSFormat.number(score)) von 100, \(infection.scoreLevelKey ?? infection.scoreLevel.fallbackWord)")
+        } else if let recovery = infection.recovery {
             parts.append("Recovery \(BIOSFormat.number(recovery)) Prozent, \(zone.word)")
         }
         if let subline = infection.subline { parts.append(subline) }
+        if let env = infection.envContext { parts.append(env) }
         if infection.resistUp { parts.append(infection.contextText ?? "Dazu Glukose/Insulinbedarf erhöht") }
         if let note = infection.confounderNote { parts.append(note) }
         if let reason = glucoseNotEvaluableReason { parts.append("Glukose nicht bewertbar: \(reason)") }
         return parts.joined(separator: ". ")
+    }
+}
+
+/// Hero ring: Infekt-Score (0...100, color + symbol + word by level) when the
+/// server sends `score`, otherwise Recovery in Whoop colors (Build 3 behavior).
+struct HeroRing: View {
+    let infection: InfectionModel?
+    let size: CGFloat
+    let lineWidth: CGFloat
+
+    var body: some View {
+        ZStack {
+            RecoveryRing(value: ringValue, color: ringColor, lineWidth: lineWidth)
+                .frame(width: size, height: size)
+            VStack(spacing: 1) {
+                HStack(alignment: .firstTextBaseline, spacing: 1) {
+                    Text(ringValue.map { BIOSFormat.number($0) } ?? "n. v.")
+                        .font(size > 100 ? .title.bold() : .title3.bold())
+                        .monospacedDigit()
+                        .minimumScaleFactor(0.6)
+                        .lineLimit(1)
+                    if isScore == false, ringValue != nil {
+                        Text("%")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(BIOSTheme.text2)
+                    }
+                }
+                if size > 90 {
+                    Text(isScore ? "Infekt-Score" : "Recovery")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(BIOSTheme.text2)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+                if isScore, let infection {
+                    HStack(spacing: 2) {
+                        Image(systemName: levelSymbol(infection.scoreLevel))
+                        Text(infection.scoreLevelKey ?? infection.scoreLevel.fallbackWord)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                    }
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(ringColor)
+                }
+            }
+            .frame(width: size * 0.78)
+        }
+        .accessibilityHidden(true)
+    }
+
+    private var isScore: Bool {
+        infection?.score != nil
+    }
+
+    private var ringValue: Double? {
+        infection?.score ?? infection?.recovery
+    }
+
+    private var ringColor: Color {
+        guard let infection else { return BIOSTheme.text3 }
+        if infection.score != nil {
+            return ScoreStyle.color(infection.scoreLevel)
+        }
+        return infection.recoveryZone.color
+    }
+
+    private func levelSymbol(_ level: ScoreLevel) -> String {
+        ScoreStyle.symbol(level)
+    }
+}
+
+enum ScoreStyle {
+    static func color(_ level: ScoreLevel) -> Color {
+        switch level {
+        case .low: return BIOSTheme.good
+        case .medium: return BIOSTheme.mid
+        case .high: return BIOSTheme.bad
+        }
+    }
+
+    static func symbol(_ level: ScoreLevel) -> String {
+        switch level {
+        case .low: return "checkmark.circle"
+        case .medium: return "eye"
+        case .high: return "thermometer.medium"
+        }
     }
 }
 

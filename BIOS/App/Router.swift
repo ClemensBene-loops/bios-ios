@@ -49,10 +49,12 @@ enum DetailRoute: String, CaseIterable, Hashable {
     case insulin
     case loop
     case alkohol
+    case blutdruck
 
     var title: String {
         switch self {
         case .alkohol: return "Alkohol-Tage"
+        case .blutdruck: return "Blutdruck"
         case .infekt: return "Infekt-Check"
         case .viren: return "Viren im Abwasser"
         case .pollen: return "Pollen"
@@ -84,6 +86,7 @@ enum DetailRoute: String, CaseIterable, Hashable {
         case "insulin": self = .insulin
         case "loop", "nightscout": self = .loop
         case "alkohol", "alcohol", "events", "kalender": self = .alkohol
+        case "blutdruck", "blood_pressure", "bp": self = .blutdruck
         default: return nil
         }
     }

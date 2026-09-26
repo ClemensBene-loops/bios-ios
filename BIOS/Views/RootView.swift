@@ -104,6 +104,7 @@ struct DetailView: View {
             case .insulin: InsulinDetailView()
             case .loop: LoopDetailView()
             case .alkohol: AlcoholCalendarView()
+            case .blutdruck: BloodPressureDetailView()
             }
         }
         .navigationTitle(route.title)

@@ -39,6 +39,9 @@ struct HeuteView: View {
                     RecoveryTile(recovery: dashboard?.recovery)
                     InsulinTile(insulin: dashboard?.insulin)
                     LoopTile(loop: dashboard?.loop)
+                    if let pressure = dashboard?.bloodPressure {
+                        BloodPressureTile(pressure: pressure)
+                    }
                 }
 
                 StandLine()

@@ -13,6 +13,8 @@ struct SeriesPoint: Identifiable {
     let tbr: Double?
     let tir: Double?
     let tar: Double?
+    /// Measurement setting ("home" / "clinic"), blood pressure only.
+    var setting: String? = nil
 
     static func list(_ values: [JSONValue]) -> [SeriesPoint] {
         var points: [SeriesPoint] = []
@@ -24,7 +26,8 @@ struct SeriesPoint: Identifiable {
                 value: element.double("v"),
                 tbr: element.double("tbr"),
                 tir: element.double("tir"),
-                tar: element.double("tar")
+                tar: element.double("tar"),
+                setting: element.str("setting") ?? element.str("context") ?? element.str("place")
             ))
         }
         return points.sorted { $0.date < $1.date }

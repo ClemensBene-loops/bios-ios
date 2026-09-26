@@ -13,6 +13,12 @@ struct InfektDetailView: View {
                 StoreStatusBanner()
                 InfektSummaryCard(infection: infection)
                 RangePicker(days: $days)
+                if let infection, infection.score != nil {
+                    MetricChartCard(kind: .infectionScore, days: days)
+                    if !infection.scoreParts.isEmpty {
+                        ScorePartsCard(parts: infection.scoreParts, score: infection.score)
+                    }
+                }
                 MetricChartCard(kind: .rhr, days: days)
                 MetricChartCard(kind: .hrv, days: days)
                 MetricChartCard(kind: .skinTemp, days: days)
@@ -51,21 +57,7 @@ struct InfektSummaryCard: View {
         let zone = infection?.recoveryZone ?? .none
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 14) {
-                ZStack {
-                    RecoveryRing(value: infection?.recovery, color: zone.color, lineWidth: 8)
-                        .frame(width: 76, height: 76)
-                    HStack(alignment: .firstTextBaseline, spacing: 1) {
-                        Text(BIOSFormat.number(infection?.recovery))
-                            .font(.title3.bold())
-                            .monospacedDigit()
-                            .minimumScaleFactor(0.6)
-                            .lineLimit(1)
-                        Text("%")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(BIOSTheme.text2)
-                    }
-                    .frame(width: 60)
-                }
+                HeroRing(infection: infection, size: 84, lineWidth: 8)
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Image(systemName: status.symbol)
@@ -89,6 +81,10 @@ struct InfektSummaryCard: View {
                 ContextLine(symbol: "wineglass", title: note, detail: nil, style: .neutral)
             }
 
+            if let env = infection?.envContext {
+                ContextLine(symbol: "microbe", title: env, detail: nil, style: .neutral)
+            }
+
             if let chips = infection?.chips, !chips.isEmpty {
                 FlowLayout(spacing: 7, lineSpacing: 7) {
                     ForEach(chips) { chip in
@@ -103,6 +99,9 @@ struct InfektSummaryCard: View {
 
     private func checkedText(zone: BIOSZone) -> String {
         var text = "Recovery \(zone.word)"
+        if infection?.score != nil, let recovery = infection?.recovery {
+            text = "Infekt-Score · Recovery \(BIOSFormat.number(recovery)) %"
+        }
         if let checked = infection?.checkedAt {
             text += " · geprüft \(BIOSFormat.relative(checked))"
         }
@@ -252,5 +251,67 @@ struct GridHeaderText: View {
         Text(text)
             .font(.caption)
             .foregroundStyle(BIOSTheme.text3)
+    }
+}
+
+/// Breakdown of the Infekt-Score: one bar per contribution (points of max).
+struct ScorePartsCard: View {
+    let parts: [ScorePart]
+    let score: Double?
+
+    var body: some View {
+        let top = Swift.max(1, parts.compactMap { $0.max ?? $0.points }.max() ?? 1)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Zusammensetzung")
+                    .font(.headline)
+                Spacer()
+                if let score {
+                    Text("Score \(BIOSFormat.number(score)) von 100")
+                        .font(.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(BIOSTheme.text3)
+                }
+            }
+            ForEach(parts) { part in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(part.label)
+                            .font(.subheadline)
+                        Spacer(minLength: 8)
+                        Text(pointsText(part))
+                            .font(.subheadline.weight(.semibold))
+                            .monospacedDigit()
+                    }
+                    GeometryReader { proxy in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.white.opacity(0.08))
+                            Capsule()
+                                .fill(BIOSTheme.skin)
+                                .frame(width: proxy.size.width * CGFloat(Swift.min(1, Swift.max(0, (part.points ?? 0) / (part.max ?? top)))))
+                        }
+                    }
+                    .frame(height: 6)
+                    .accessibilityHidden(true)
+                    if let text = part.text {
+                        Text(text)
+                            .font(.caption)
+                            .foregroundStyle(BIOSTheme.text2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .accessibilityElement(children: .combine)
+            }
+        }
+        .foregroundStyle(BIOSTheme.text1)
+        .biosCard()
+    }
+
+    private func pointsText(_ part: ScorePart) -> String {
+        let points = BIOSFormat.number(part.points)
+        if let max = part.max {
+            return "\(points) von \(BIOSFormat.number(max))"
+        }
+        return points
     }
 }

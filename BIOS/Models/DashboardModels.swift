@@ -106,6 +106,8 @@ struct DashboardModel {
     let errors: [String]
     /// Context events (alcohol), additive field of Phase 2c.
     let events: DashboardEventsModel?
+    /// Blood pressure tile (Build 4, optional; nil hides the tile).
+    let bloodPressure: BloodPressureTileModel?
 
     /// Major schema version this app understands.
     static let supportedSchema = 1
@@ -136,6 +138,7 @@ struct DashboardModel {
         recovery = tiles?.obj("recovery").map { RecoveryTileModel(json: $0) }
         insulin = tiles?.obj("insulin").map { InsulinTileModel(json: $0) }
         loop = tiles?.obj("loop").map { LoopTileModel(json: $0) }
+        bloodPressure = (tiles?.obj("blood_pressure") ?? json.obj("blood_pressure")).map { BloodPressureTileModel(json: $0) }
     }
 
     var isNewerSchema: Bool {
@@ -342,6 +345,13 @@ struct InfectionModel {
     let days: [InfectionDay]
     /// "Erholung gedrückt, vermutlich Alkohol/Training" (Phase 2c, optional).
     let confounderNote: String?
+    /// Infekt-Score 0...100 (Build 4, optional); nil = hero shows Recovery.
+    let score: Double?
+    let scoreLevelKey: String?
+    let scoreLevel: ScoreLevel
+    let scoreParts: [ScorePart]
+    /// "Passt zeitlich zu: COVID im Wiener Abwasser stark steigend".
+    let envContext: String?
 
     init(json: JSONValue) {
         day = json.str("day")
@@ -366,6 +376,12 @@ struct InfectionModel {
         confounderNote = json.str("confounder_note")
             ?? json.obj("confounder")?.str("text")
             ?? json.str("confounder")
+        let scoreValue = json.double("score") ?? json.obj("score")?.double("value")
+        score = scoreValue.map { Swift.max(0, Swift.min(100, $0)) }
+        scoreLevelKey = json.str("score_level") ?? json.obj("score")?.str("level")
+        scoreLevel = ScoreLevel(key: scoreLevelKey, score: scoreValue)
+        scoreParts = ScorePart.list(json["score_parts"] ?? json.obj("score")?["parts"])
+        envContext = json.str("env_context") ?? json.obj("env_context")?.str("text")
         if let headline = json.str("headline") {
             self.headline = headline
         } else {

@@ -24,6 +24,8 @@ struct ChartLinePoint: Identifiable {
     let value: Double
     let color: Color
     var dashed: Bool = false
+    /// Drawn as a square (e.g. clinic blood pressure) instead of a circle.
+    var square: Bool = false
 }
 
 struct ChartBand: Identifiable {
@@ -38,6 +40,8 @@ struct ChartRef: Identifiable {
     let id: Int
     let value: Double
     let label: String
+    /// Label at the trailing end (two close lines keep their labels apart).
+    var trailing: Bool = false
 }
 
 struct ChartMarker: Identifiable {
@@ -110,9 +114,11 @@ struct ChartSpec {
     var valueDigits: Int = 0
     /// Display names of line series in the bubble ("wien" -> "Wien").
     var seriesLabels: [String: String] = [:]
+    /// Single points without a line (drawn with the dots, e.g. clinic values).
+    var extraPoints: [ChartLinePoint] = []
 
     var isEmpty: Bool {
-        bars.isEmpty && lines.isEmpty
+        bars.isEmpty && lines.isEmpty && extraPoints.isEmpty
     }
 
     // MARK: Builders
@@ -194,7 +200,7 @@ struct BIOSChart: View {
                 RuleMark(y: .value("Referenz", ref.value))
                     .foregroundStyle(Color.white.opacity(0.28))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                    .annotation(position: .top, alignment: .leading, spacing: 2) {
+                    .annotation(position: .top, alignment: ref.trailing ? .trailing : .leading, spacing: 2) {
                         // Pill background: the label stays legible above bars and lines.
                         Text(ref.label)
                             .font(.caption2)
@@ -257,7 +263,8 @@ struct BIOSChart: View {
                     y: .value("Wert", point.value)
                 )
                 .foregroundStyle(point.color)
-                .symbolSize(point.dashed ? 24 : 36)
+                .symbol(point.square ? BasicChartSymbolShape.square : BasicChartSymbolShape.circle)
+                .symbolSize(point.square ? 44 : (point.dashed ? 24 : 36))
             }
             ForEach(flags) { flag in
                 PointMark(
@@ -363,7 +370,7 @@ struct BIOSChart: View {
             lines.append((bar.label.map { "\($0) " } ?? "") + formatValue(bar.value))
         }
         var seen: [String] = []
-        for point in spec.lines where point.date == date {
+        for point in (spec.lines + spec.extraPoints) where point.date == date {
             let name = point.series.components(separatedBy: "-").first ?? point.series
             if seen.contains(name) { continue }
             seen.append(name)
@@ -398,11 +405,11 @@ struct BIOSChart: View {
     // MARK: - Scales
 
     private var allDates: [Date] {
-        spec.bars.map(\.date) + spec.lines.map(\.date)
+        spec.bars.map(\.date) + spec.lines.map(\.date) + spec.extraPoints.map(\.date)
     }
 
     private func computeYDomain() -> ClosedRange<Double> {
-        var values = spec.bars.map(\.value) + spec.lines.map(\.value)
+        var values = spec.bars.map(\.value) + spec.lines.map(\.value) + spec.extraPoints.map(\.value)
         if !spec.bars.isEmpty {
             // Stacked bars: the sum per date is the top.
             var sums: [Date: Double] = [:]
@@ -540,7 +547,7 @@ struct BIOSChart: View {
     /// Endpoints of every line segment set, plus all points for short series.
     private func dotPoints() -> [ChartLinePoint] {
         if spec.showDots || Set(spec.lines.map(\.date)).count <= 8 {
-            return spec.lines
+            return spec.lines + spec.extraPoints
         }
         var lastBySeries: [String: ChartLinePoint] = [:]
         for point in spec.lines {
@@ -548,7 +555,7 @@ struct BIOSChart: View {
             if let current = lastBySeries[name], current.date >= point.date { continue }
             lastBySeries[name] = point
         }
-        return Array(lastBySeries.values)
+        return Array(lastBySeries.values) + spec.extraPoints
     }
 }
 
