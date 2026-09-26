@@ -4,7 +4,7 @@
 # SAFETY: The Match-Secrets repo and its App Store distribution certificate are
 # shared with Loop. This file intentionally contains NO match_nuke and NO
 # certificate renewal logic: revoking that certificate would break Loop.
-# BIOS only ever adds its own App Store provisioning profile.
+# BIOS only ever adds its own App Store provisioning profiles (app + widgets).
 #
 # Required env (GitHub org secrets): TEAMID, GH_PAT, MATCH_PASSWORD,
 # FASTLANE_KEY_ID, FASTLANE_ISSUER_ID, FASTLANE_KEY.
@@ -15,6 +15,13 @@ default_platform(:ios)
 
 APP_IDENTIFIER = "at.bene.bios"
 APP_NAME = "BIOS"
+# Widget extension (Live Activity). Own App ID, no capability needed:
+# Live Activities and their APNs pushes (topic at.bene.bios.push-type.liveactivity)
+# run over the app's Push capability; no App Group is used.
+WIDGETS_IDENTIFIER = "at.bene.bios.widgets"
+WIDGETS_NAME = "BIOS Widgets"
+WIDGETS_TARGET = "BIOSWidgets"
+ALL_IDENTIFIERS = [APP_IDENTIFIER, WIDGETS_IDENTIFIER].freeze
 MATCH_GIT_URL = "https://github.com/ClemensBene-loops/Match-Secrets.git"
 
 TEAMID = ENV["TEAMID"]
@@ -63,6 +70,13 @@ platform :ios do
       UI.important("Bundle ID #{APP_IDENTIFIER} is not registered yet (run 2. Add Identifiers).")
     end
 
+    widgets_id = Spaceship::ConnectAPI::BundleId.find(WIDGETS_IDENTIFIER)
+    if widgets_id
+      UI.success("Bundle ID #{WIDGETS_IDENTIFIER} is registered.")
+    else
+      UI.important("Bundle ID #{WIDGETS_IDENTIFIER} is not registered yet (run 2. Add Identifiers).")
+    end
+
     app = Spaceship::ConnectAPI::App.find(APP_IDENTIFIER)
     if app
       UI.success("App Store Connect app record exists: #{app.name} (#{app.id})")
@@ -92,7 +106,7 @@ platform :ios do
 
   # --- 2. identifiers (creates the App ID at Apple) --------------------------
 
-  desc "Register bundle ID at.bene.bios (if missing) with the Push Notifications capability"
+  desc "Register bundle IDs at.bene.bios (Push Notifications) and at.bene.bios.widgets (if missing)"
   lane :identifiers do
     bios_api_key
 
@@ -116,11 +130,25 @@ platform :ios do
       bundle_id.create_capability(push_type)
     end
     UI.success("Bundle ID #{APP_IDENTIFIER} ready.")
+
+    # Widget extension: plain App ID, no capabilities.
+    widgets_id = Spaceship::ConnectAPI::BundleId.find(WIDGETS_IDENTIFIER)
+    if widgets_id
+      UI.message("Bundle ID #{WIDGETS_IDENTIFIER} already exists (#{widgets_id.id}).")
+    else
+      UI.message("Creating bundle ID #{WIDGETS_IDENTIFIER} ...")
+      Spaceship::ConnectAPI::BundleId.create(
+        name: WIDGETS_NAME,
+        identifier: WIDGETS_IDENTIFIER,
+        platform: "IOS"
+      )
+    end
+    UI.success("Bundle ID #{WIDGETS_IDENTIFIER} ready.")
   end
 
   # --- 3. certs (creates the App Store profile, reuses the certificate) ------
 
-  desc "Create the App Store profile for at.bene.bios, reusing the existing distribution certificate"
+  desc "Create the App Store profiles for at.bene.bios and at.bene.bios.widgets, reusing the existing distribution certificate"
   lane :certs do
     setup_ci if ENV["CI"]
     bios_api_key
@@ -131,6 +159,9 @@ platform :ios do
     UI.user_error!("Bundle ID #{APP_IDENTIFIER} not found. Run 2. Add Identifiers first.") unless bundle_id
     unless bundle_id.get_capabilities.map(&:capability_type).include?(push_type)
       UI.user_error!("Push Notifications capability missing on #{APP_IDENTIFIER}. Run 2. Add Identifiers first.")
+    end
+    unless Spaceship::ConnectAPI::BundleId.find(WIDGETS_IDENTIFIER)
+      UI.user_error!("Bundle ID #{WIDGETS_IDENTIFIER} not found. Run 2. Add Identifiers first.")
     end
 
     # Guard 2: the shared certificate must already be in Match-Secrets and valid.
@@ -144,16 +175,17 @@ platform :ios do
     )
 
     # Only now allow writes: match finds the existing certificate in the repo
-    # and creates just the missing App Store profile for at.bene.bios.
+    # and creates just the missing App Store profiles (the existing one for
+    # at.bene.bios is reused as is, force: false).
     match(
       type: "appstore",
       readonly: false,
       force: false,
       git_url: MATCH_GIT_URL,
       git_basic_authorization: match_auth,
-      app_identifier: [APP_IDENTIFIER]
+      app_identifier: ALL_IDENTIFIERS
     )
-    UI.success("App Store profile for #{APP_IDENTIFIER} is in Match-Secrets.")
+    UI.success("App Store profiles for #{ALL_IDENTIFIERS.join(", ")} are in Match-Secrets.")
   end
 
   # --- 4. build + release ----------------------------------------------------
@@ -182,22 +214,26 @@ platform :ios do
       readonly: true,
       git_url: MATCH_GIT_URL,
       git_basic_authorization: match_auth,
-      app_identifier: [APP_IDENTIFIER]
+      app_identifier: ALL_IDENTIFIERS
     )
 
     mapping = Actions.lane_context[SharedValues::MATCH_PROVISIONING_PROFILE_MAPPING] || {}
-    profile_name = mapping[APP_IDENTIFIER]
-    UI.user_error!("No match profile for #{APP_IDENTIFIER}. Run 3. Create Certificates first.") unless profile_name
+    ALL_IDENTIFIERS.each do |identifier|
+      UI.user_error!("No match profile for #{identifier}. Run 2. Add Identifiers and 3. Create Certificates first.") unless mapping[identifier]
+    end
 
-    update_code_signing_settings(
-      path: PROJECT,
-      use_automatic_signing: false,
-      team_id: TEAMID,
-      targets: ["BIOS"],
-      bundle_identifier: APP_IDENTIFIER,
-      profile_name: profile_name,
-      code_sign_identity: "iPhone Distribution"
-    )
+    # Manual signing per target with its own App Store profile.
+    { "BIOS" => APP_IDENTIFIER, WIDGETS_TARGET => WIDGETS_IDENTIFIER }.each do |target, identifier|
+      update_code_signing_settings(
+        path: PROJECT,
+        use_automatic_signing: false,
+        team_id: TEAMID,
+        targets: [target],
+        bundle_identifier: identifier,
+        profile_name: mapping[identifier],
+        code_sign_identity: "iPhone Distribution"
+      )
+    end
 
     gym(
       project: PROJECT,
@@ -205,7 +241,7 @@ platform :ios do
       configuration: "Release",
       export_method: "app-store",
       export_options: {
-        provisioningProfiles: { APP_IDENTIFIER => profile_name }
+        provisioningProfiles: ALL_IDENTIFIERS.to_h { |identifier| [identifier, mapping[identifier]] }
       },
       destination: "generic/platform=iOS",
       output_directory: OUTPUT_DIR,

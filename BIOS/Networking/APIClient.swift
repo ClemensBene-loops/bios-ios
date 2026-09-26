@@ -4,13 +4,18 @@ import Foundation
 enum APIError: LocalizedError, Equatable {
     case invalidResponse
     case http(Int)
+    case notConfigured
 
     var errorDescription: String? {
         switch self {
         case .invalidResponse:
             return "Ungültige Antwort vom Server"
+        case .notConfigured:
+            return "Server nicht konfiguriert"
         case .http(401), .http(403):
             return "Server lehnt das Secret ab (HTTP 401/403)"
+        case .http(404):
+            return "Endpunkt fehlt am Server (HTTP 404)"
         case .http(let status):
             return "Server-Fehler (HTTP \(status))"
         }
@@ -22,21 +27,27 @@ enum APIError: LocalizedError, Equatable {
 /// Every request carries `Authorization: Bearer <BIOSAPISecret>`. Network
 /// errors, HTTP 429 and 5xx are retried with exponential backoff (up to
 /// `maxAttempts` attempts in total); other HTTP errors fail immediately.
+/// All clients share one URLSession (connection reuse, no per-call sessions).
 struct APIClient: Sendable {
     let baseURL: URL
     let secret: String
     let session: URLSession
     let maxAttempts: Int
 
-    init(baseURL: URL, secret: String, maxAttempts: Int = 3) {
-        self.baseURL = baseURL
-        self.secret = secret
-        self.maxAttempts = max(1, maxAttempts)
+    static let sharedSession: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 15
         configuration.timeoutIntervalForResource = 30
         configuration.waitsForConnectivity = false
-        self.session = URLSession(configuration: configuration)
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: configuration)
+    }()
+
+    init(baseURL: URL, secret: String, session: URLSession = APIClient.sharedSession, maxAttempts: Int = 3) {
+        self.baseURL = baseURL
+        self.secret = secret
+        self.session = session
+        self.maxAttempts = max(1, maxAttempts)
     }
 
     /// Client from the build-time config, or nil if URL or secret is missing.
@@ -55,19 +66,114 @@ struct APIClient: Sendable {
         _ = try await send(request)
     }
 
-    /// `GET /v1/summary`: latest Whoop check and outlook (Phase 3).
+    /// `GET /v1/summary`: latest Whoop check and outlook (v1 contract, kept for build 2).
     func fetchSummary() async throws -> SummaryResponse {
         let request = makeRequest(path: ["v1", "summary"], method: "GET")
         let data = try await send(request)
         return try JSONDecoder().decode(SummaryResponse.self, from: data)
     }
 
+    /// `GET /v1/dashboard`: ready-made tiles for the Heute tab and friends.
+    func fetchDashboard() async throws -> JSONValue {
+        try await getJSON(path: ["v1", "dashboard"])
+    }
+
+    /// `GET /v1/bodymap`: 2D body map (regions, status, metrics, links).
+    func fetchBodymap() async throws -> JSONValue {
+        try await getJSON(path: ["v1", "bodymap"])
+    }
+
+    /// `GET /v1/series?metric=...&days=...[&source=...]`: one logical time series.
+    func fetchSeries(metric: String, days: Int, source: String? = nil) async throws -> JSONValue {
+        var query = [
+            URLQueryItem(name: "metric", value: metric),
+            URLQueryItem(name: "days", value: String(days)),
+        ]
+        if let source, !source.isEmpty {
+            query.append(URLQueryItem(name: "source", value: source))
+        }
+        return try await getJSON(path: ["v1", "series"], query: query)
+    }
+
+    /// `POST /v1/events`: marks a day (idempotent per date + kind).
+    func postEvent(date: String, kind: String, note: String? = nil) async throws {
+        var request = makeRequest(path: ["v1", "events"], method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(EventBody(date: date, kind: kind, note: note))
+        _ = try await send(request)
+    }
+
+    /// `DELETE /v1/events?date=...&kind=...`: removes a mark (no error if absent).
+    func deleteEvent(date: String, kind: String) async throws {
+        let request = makeRequest(
+            path: ["v1", "events"],
+            query: [URLQueryItem(name: "date", value: date), URLQueryItem(name: "kind", value: kind)],
+            method: "DELETE"
+        )
+        _ = try await send(request)
+    }
+
+    /// `GET /v1/events?days=N`: marked days of the last N days (N <= 400).
+    func fetchEvents(days: Int) async throws -> JSONValue {
+        try await getJSON(path: ["v1", "events"], query: [URLQueryItem(name: "days", value: String(days))])
+    }
+
+    /// `POST /v1/test-push`: the server pushes a short test alert to this token only.
+    /// Exactly one attempt: the server allows one test push per minute and token
+    /// (HTTP 429), so a retry would only hit the limit.
+    func sendTestPush(token: String) async throws -> TestPushResult {
+        let single = APIClient(baseURL: baseURL, secret: secret, session: session, maxAttempts: 1)
+        var request = single.makeRequest(path: ["v1", "test-push"], method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(TestPushBody(token: token))
+        let data = try await single.send(request)
+        let value = try JSONDecoder().decode(JSONValue.self, from: data)
+        guard value.objectValue != nil else { throw APIError.invalidResponse }
+        return TestPushResult(json: value)
+    }
+
+    /// `POST /v1/refresh`: asks the server for a rate-limited Whoop pull (202).
+    /// One short attempt: pull-to-refresh falls back to the normal reload on any error.
+    func requestWhoopRefresh() async throws -> WhoopRefreshState {
+        try await refreshCall(method: "POST")
+    }
+
+    /// `GET /v1/refresh`: state of the Whoop pull without requesting one.
+    func fetchWhoopRefreshState() async throws -> WhoopRefreshState {
+        try await refreshCall(method: "GET")
+    }
+
+    private func refreshCall(method: String) async throws -> WhoopRefreshState {
+        let single = APIClient(baseURL: baseURL, secret: secret, session: session, maxAttempts: 1)
+        var request = single.makeRequest(path: ["v1", "refresh"], method: method)
+        request.timeoutInterval = 8
+        let data = try await single.send(request)
+        let value = try JSONDecoder().decode(JSONValue.self, from: data)
+        guard value.objectValue != nil else { throw APIError.invalidResponse }
+        return WhoopRefreshState(json: value)
+    }
+
+    /// GET returning a JSON object (anything else is an invalid response).
+    func getJSON(path: [String], query: [URLQueryItem] = []) async throws -> JSONValue {
+        let request = makeRequest(path: path, query: query, method: "GET")
+        let data = try await send(request)
+        let value = try JSONDecoder().decode(JSONValue.self, from: data)
+        guard value.objectValue != nil else { throw APIError.invalidResponse }
+        return value
+    }
+
     // MARK: - Internals
 
-    private func makeRequest(path: [String], method: String) -> URLRequest {
+    func makeRequest(path: [String], query: [URLQueryItem] = [], method: String) -> URLRequest {
         var url = baseURL
         for component in path {
             url = url.appendingPathComponent(component)
+        }
+        if !query.isEmpty, var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            components.queryItems = query
+            if let withQuery = components.url {
+                url = withQuery
+            }
         }
         var request = URLRequest(url: url)
         request.httpMethod = method
@@ -78,7 +184,7 @@ struct APIClient: Sendable {
         return request
     }
 
-    private func send(_ request: URLRequest) async throws -> Data {
+    func send(_ request: URLRequest) async throws -> Data {
         var lastError: Error = APIError.invalidResponse
         for attempt in 1...maxAttempts {
             if attempt > 1 {
@@ -113,5 +219,85 @@ struct APIClient: Sendable {
             throw APIError.http(status)
         }
         throw lastError
+    }
+}
+
+/// Body of `POST /v1/test-push`.
+struct TestPushBody: Encodable, Sendable {
+    let token: String
+}
+
+/// Answer of `POST /v1/test-push` (HTTP 200 = Apple was reached; `accepted` says
+/// whether Apple took the push). Missing fields fall back to nil/false.
+struct TestPushResult: Equatable, Sendable {
+    let accepted: Bool
+    let apnsStatus: Int?
+    let apnsReason: String?
+    let removed: Bool
+
+    init(json: JSONValue) {
+        accepted = json.flag("ok")
+        apnsStatus = json.int("apns_status")
+        apnsReason = json.str("apns_reason")
+        removed = json.flag("removed")
+    }
+}
+
+/// Answer of `POST /v1/refresh` (202) and `GET /v1/refresh` (200). Lenient:
+/// missing fields fall back to nil/false (GET has no `queued`/`reason`).
+struct WhoopRefreshState: Equatable, Sendable {
+    let queued: Bool
+    /// `queued` (newly requested), `pending` (already waiting), `recent` (pulled < interval ago).
+    let reason: String?
+    /// Raw `last_pull`, compared to notice a new pull when it does not parse.
+    let lastPullRaw: String?
+    let lastPull: Date?
+    let nextAllowedAt: Date?
+    let pending: Bool
+    let intervalSeconds: Int?
+
+    init(json: JSONValue) {
+        queued = json.flag("queued")
+        reason = json.str("reason")?.lowercased()
+        lastPullRaw = json.str("last_pull")
+        lastPull = BIOSDate.parse(lastPullRaw)
+        nextAllowedAt = BIOSDate.parse(json.str("next_allowed_at"))
+        pending = json.flag("pending")
+        intervalSeconds = json.int("interval_s")
+    }
+
+    /// A pull is requested or waits for the server's minute cron.
+    var isWaiting: Bool {
+        queued || pending || reason == "queued" || reason == "pending"
+    }
+
+    /// Whether `other` reports a newer successful pull than this state.
+    func hasNewerPull(_ other: WhoopRefreshState) -> Bool {
+        guard let newRaw = other.lastPullRaw else { return false }
+        guard let oldRaw = lastPullRaw else { return true }
+        if let old = lastPull, let new = other.lastPull { return new > old }
+        return newRaw != oldRaw
+    }
+}
+
+/// Classifies refresh errors for the UI.
+enum ErrorKind {
+    /// Cancellation (task or URLSession) is not an error worth showing.
+    static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return true }
+        return false
+    }
+
+    /// No connection (offline, DNS, timeout): the UI says "Offline" instead of an error.
+    static func isOffline(_ error: Error) -> Bool {
+        guard let urlError = error as? URLError else { return false }
+        switch urlError.code {
+        case .notConnectedToInternet, .networkConnectionLost, .timedOut, .cannotFindHost,
+             .cannotConnectToHost, .dnsLookupFailed, .dataNotAllowed, .internationalRoamingOff:
+            return true
+        default:
+            return false
+        }
     }
 }

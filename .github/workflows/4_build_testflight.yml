@@ -1,10 +1,16 @@
 name: 4. Build BIOS
-run-name: Build BIOS (${{ github.ref_name }})
+run-name: Build BIOS (${{ github.ref_name }}${{ github.event_name == 'schedule' && ', monthly' || '' }})
 
 # Builds a signed App Store IPA and uploads it to TestFlight. Needs 2 + 3 and
-# an App Store Connect app record for at.bene.bios. Manual only.
+# an App Store Connect app record for at.bene.bios.
+# Triggers: manual ("Run workflow", any branch) and monthly on the 1st at 04:00
+# UTC, so a fresh build replaces the one that expires after 90 days. Scheduled
+# runs always use the default branch (main): the schedule only takes effect once
+# this file is on main, and it always builds main.
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "0 4 1 * *"
 
 permissions:
   contents: read
@@ -14,6 +20,23 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # GitHub disables scheduled workflows of a public repo after 60 days without
+  # repository activity. Re-enabling the workflow on every scheduled run resets
+  # that timer (same keepalive as Loop's build workflow). Only on schedule, only
+  # in the owner's repo (never in forks), independent of the build result.
+  keepalive:
+    name: Keepalive
+    if: github.event_name == 'schedule' && github.repository_owner == 'ClemensBene-loops'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Re-enable this workflow (resets the 60-day inactivity timer)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api --method PUT "repos/${{ github.repository }}/actions/workflows/4_build_testflight.yml/enable"
+
   validate:
     name: Validate
     if: github.repository_owner == 'ClemensBene-loops'
@@ -124,6 +147,14 @@ jobs:
             exit 1
           fi
           echo "aps-environment = production"
+          # The Live Activity extension must be embedded and signed.
+          APPEX="$APP/PlugIns/BIOSWidgets.appex"
+          if [ ! -d "$APPEX" ]; then
+            echo "::error::BIOSWidgets.appex is missing in the IPA."
+            exit 1
+          fi
+          codesign --verify --strict "$APPEX"
+          echo "BIOSWidgets.appex embedded and signed"
 
       - name: Fastlane upload to TestFlight
         run: bundle exec fastlane release
