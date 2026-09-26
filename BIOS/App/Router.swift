@@ -41,6 +41,7 @@ enum AppTab: String, CaseIterable, Hashable {
 
 /// Detail screens, pushed onto the NavigationStack of the current tab.
 enum DetailRoute: String, CaseIterable, Hashable {
+    case gesundheit
     case infekt
     case viren
     case pollen
@@ -53,6 +54,7 @@ enum DetailRoute: String, CaseIterable, Hashable {
 
     var title: String {
         switch self {
+        case .gesundheit: return "Gesundheits-Score"
         case .alkohol: return "Alkohol-Tage"
         case .blutdruck: return "Blutdruck"
         case .infekt: return "Infekt-Check"
@@ -78,6 +80,7 @@ enum DetailRoute: String, CaseIterable, Hashable {
     init?(pushValue: String) {
         let value = pushValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         switch value {
+        case "gesundheit", "health", "health_score", "score": self = .gesundheit
         case "infekt", "infection", "whoop", "whoop_check": self = .infekt
         case "viren", "viruses", "virus", "wastewater", "abwasser": self = .viren
         case "pollen", "allergy", "allergie": self = .pollen

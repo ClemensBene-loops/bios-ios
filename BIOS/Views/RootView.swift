@@ -115,6 +115,7 @@ struct DetailView: View {
             case .loop: LoopDetailView()
             case .alkohol: AlcoholCalendarView()
             case .blutdruck: BloodPressureDetailView()
+            case .gesundheit: HealthDetailView()
             }
         }
         .navigationTitle(route.title)

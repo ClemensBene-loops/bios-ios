@@ -42,6 +42,8 @@ enum MetricKind {
     case infectionScore
     /// Body temperature readings entered in the app (`body_temp`, one point per reading).
     case bodyTemp
+    /// Gesundheits-Score 0...100 (`health_score`).
+    case healthScore
 
     var metric: String {
         switch self {
@@ -58,6 +60,7 @@ enum MetricKind {
         case .insAuto: return "ins_auto"
         case .infectionScore: return "infection_score"
         case .bodyTemp: return "body_temp"
+        case .healthScore: return "health_score"
         }
     }
 
@@ -76,6 +79,7 @@ enum MetricKind {
         case .insAuto: return "Auto-Bolus (Loop-Korrekturen)"
         case .infectionScore: return "Infekt-Score"
         case .bodyTemp: return "Körpertemperatur"
+        case .healthScore: return "Gesundheits-Score"
         }
     }
 
@@ -92,6 +96,7 @@ enum MetricKind {
         case .insAuto: return nil
         case .infectionScore: return "thermometer.medium"
         case .bodyTemp: return "thermometer"
+        case .healthScore: return "heart.circle"
         }
     }
 
@@ -110,6 +115,7 @@ enum MetricKind {
         case .insAuto: return BIOSTheme.auto
         case .infectionScore: return BIOSTheme.skin
         case .bodyTemp: return BIOSTheme.skin
+        case .healthScore: return BIOSTheme.good
         }
     }
 
@@ -123,7 +129,7 @@ enum MetricKind {
         case .sleep: return "h"
         case .glucoseDaily: return "mg/dL"
         case .tdd, .per10g, .insAuto: return "U"
-        case .infectionScore: return "von 100"
+        case .infectionScore, .healthScore: return "von 100"
         }
     }
 
@@ -289,7 +295,7 @@ enum MetricKind {
             spec.flags = model.flagDates
             spec.contextFlags = model.contextFlagDates
             spec.yDigits = (self == .skinTemp || self == .respRate || self == .per10g) ? 1 : 0
-            if self == .infectionScore {
+            if self == .infectionScore || self == .healthScore {
                 spec.yMin = 0
                 spec.yMax = 100
                 spec.valueUnit = ""

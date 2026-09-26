@@ -20,18 +20,43 @@ struct HeuteView: View {
         let dashboard = dashboardStore.dashboard
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 12) {
-                Text(BIOSFormat.longDay(Date()).uppercased())
-                    .font(.footnote.weight(.semibold))
-                    .tracking(0.5)
-                    .foregroundStyle(BIOSTheme.text2)
-                    .padding(.horizontal, 4)
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(BIOSFormat.longDay(Date()).uppercased())
+                            .font(.footnote.weight(.semibold))
+                            .tracking(0.5)
+                            .foregroundStyle(BIOSTheme.text2)
+                        Text("Dein Tag im Überblick")
+                            .font(.title3)
+                            .foregroundStyle(BIOSTheme.text2)
+                    }
+                    Spacer(minLength: 8)
+                    // Brand mark (design A): the app icon in miniature.
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 11, style: .continuous)
+                            .fill(BIOSBrand.green)
+                        BIOSMarkImage(tile: 48)
+                    }
+                    .frame(width: 48, height: 48)
+                    .accessibilityHidden(true)
+                }
+                .padding(.horizontal, 4)
 
                 StoreStatusBanner()
 
-                HeroCard(infection: dashboard?.infection, glucoseTile: dashboard?.glucose)
-
-                QuickStatusCard { target in
-                    quickLog = target
+                if let health = dashboard?.health {
+                    // Design A: Gesundheits-Score, compact Infekt-Check, Routine.
+                    HealthScoreCard(health: health)
+                    InfektCheckCompactCard(infection: dashboard?.infection, vitals: dashboard?.vitals)
+                    RoutineCard { target in
+                        quickLog = target
+                    }
+                } else {
+                    // Server without `health`: the Build 5 layout.
+                    HeroCard(infection: dashboard?.infection, glucoseTile: dashboard?.glucose)
+                    QuickStatusCard { target in
+                        quickLog = target
+                    }
                 }
 
                 OutlookCard(outlook: dashboard?.outlook) {
@@ -49,6 +74,12 @@ struct HeuteView: View {
                         BloodPressureTile(pressure: pressure)
                     }
                 }
+
+                Text("Beobachtung, keine Diagnose")
+                    .font(.footnote)
+                    .foregroundStyle(BIOSTheme.text2)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 4)
 
                 StandLine()
             }
