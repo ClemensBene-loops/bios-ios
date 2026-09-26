@@ -113,6 +113,20 @@ struct APIClient: Sendable {
         try await getJSON(path: ["v1", "events"], query: [URLQueryItem(name: "days", value: String(days))])
     }
 
+    /// `POST /v1/test-push`: the server pushes a short test alert to this token only.
+    /// Exactly one attempt: the server allows one test push per minute and token
+    /// (HTTP 429), so a retry would only hit the limit.
+    func sendTestPush(token: String) async throws -> TestPushResult {
+        let single = APIClient(baseURL: baseURL, secret: secret, session: session, maxAttempts: 1)
+        var request = single.makeRequest(path: ["v1", "test-push"], method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(TestPushBody(token: token))
+        let data = try await single.send(request)
+        let value = try JSONDecoder().decode(JSONValue.self, from: data)
+        guard value.objectValue != nil else { throw APIError.invalidResponse }
+        return TestPushResult(json: value)
+    }
+
     /// GET returning a JSON object (anything else is an invalid response).
     func getJSON(path: [String], query: [URLQueryItem] = []) async throws -> JSONValue {
         let request = makeRequest(path: path, query: query, method: "GET")
@@ -179,6 +193,27 @@ struct APIClient: Sendable {
             throw APIError.http(status)
         }
         throw lastError
+    }
+}
+
+/// Body of `POST /v1/test-push`.
+struct TestPushBody: Encodable, Sendable {
+    let token: String
+}
+
+/// Answer of `POST /v1/test-push` (HTTP 200 = Apple was reached; `accepted` says
+/// whether Apple took the push). Missing fields fall back to nil/false.
+struct TestPushResult: Equatable, Sendable {
+    let accepted: Bool
+    let apnsStatus: Int?
+    let apnsReason: String?
+    let removed: Bool
+
+    init(json: JSONValue) {
+        accepted = json.flag("ok")
+        apnsStatus = json.int("apns_status")
+        apnsReason = json.str("apns_reason")
+        removed = json.flag("removed")
     }
 }
 

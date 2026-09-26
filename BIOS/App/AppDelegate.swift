@@ -35,6 +35,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
             ("WHOOP_CLEAR", "%u weitere Whoop-Meldungen"),
             ("OUTLOOK_ALERT", "%u weitere Ausblick-Meldungen"),
             ("OUTLOOK_WEEKLY", "%u weitere Ausblick-Meldungen"),
+            // Heartbeat warnings/Entwarnung and the test push (thread "system", tab Mehr)
+            ("SYSTEM_ALERT", "%u weitere System-Meldungen"),
         ]
         var categories = Set<UNNotificationCategory>()
         for definition in definitions {

@@ -127,9 +127,17 @@ Names only; values live in GitHub (and in the VM `.env` for the server side).
    as "Aktualisieren" (Update) in TestFlight after processing has finished; until
    then TestFlight still offers the previous build.
 5. TestFlight builds expire after 90 days (build `1.0 (2)`: around 2026-12-24);
-   after that the app no longer launches and no push arrives. Run workflow 4
-   again before that. Idea: a scheduled run of workflow 4 (like Loop's monthly
-   build) so a fresh build is always in TestFlight.
+   after that the app no longer launches and no push arrives. Workflow 4 also runs
+   **monthly on schedule** (1st of the month, 04:00 UTC): scheduled runs always
+   build `main` and only start once the schedule is on `main`. With TestFlight >
+   BIOS > "Automatische Updates" on, the iPhone picks the new build up by itself.
+   GitHub disables schedules in public repos after 60 days without repository
+   activity; the workflow's `keepalive` job re-enables itself on every scheduled
+   run (as in Loop). If it was disabled anyway (Actions tab shows "This scheduled
+   workflow is disabled"): Actions > "4. Build BIOS" > "Enable workflow", or
+   `gh workflow enable 4_build_testflight.yml -R ClemensBene-loops/bios-ios`.
+   The distribution certificate is shared with Loop: if Loop renews it, run
+   workflow 3 here again before the next build (see Troubleshooting).
 
 ## Registering a new device
 

@@ -1,13 +1,21 @@
 import SwiftUI
 import UIKit
 
-/// Tab "Mehr": push status (v1), data freshness per source, settings
-/// (display only, maintained in the server profile), version.
-/// No "Test-Push" button: the server has no such endpoint yet.
+/// Tab "Mehr": push status (v1) with "Test-Push senden", data freshness per
+/// source, settings (display only, maintained in the server profile), version.
 struct MehrView: View {
     @EnvironmentObject var state: AppState
     @EnvironmentObject var dashboardStore: DashboardStore
     @Environment(\.openURL) var openURL
+    @State private var testPush: TestPushState = .idle
+
+    /// "Test-Push senden": `POST /v1/test-push` with this device's token.
+    enum TestPushState: Equatable {
+        case idle
+        case sending
+        case sent(Date)
+        case failed(String)
+    }
 
     var body: some View {
         let dashboard = dashboardStore.dashboard
@@ -39,11 +47,24 @@ struct MehrView: View {
                         meta: "Zuletzt gesendet" + (last.sentAt.map { " · " + BIOSFormat.relative($0) } ?? "")
                     )
                 }
+                TestPushRow(
+                    title: testPush == .sending ? "Wird gesendet ..." : "Test-Push senden",
+                    detail: testPushDetail,
+                    symbol: testPushSymbol,
+                    tint: testPushTint,
+                    enabled: testPushBlocker(dashboard) == nil && testPush != .sending
+                ) {
+                    Task { await sendTestPush() }
+                }
             } header: {
                 Text("Mitteilungen")
             } footer: {
-                if let devices = dashboard?.push?.devices {
-                    Text("Registrierte Geräte am Server: \(devices)")
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(testPushBlocker(dashboard)
+                         ?? "Test-Push geht nur an dieses Gerät, höchstens einmal pro Minute. Die Zustellung steht danach im Server-Log.")
+                    if let devices = dashboard?.push?.devices {
+                        Text("Registrierte Geräte am Server: \(devices)")
+                    }
                 }
             }
 
@@ -132,6 +153,88 @@ struct MehrView: View {
         }
     }
 
+    // MARK: - Test-Push
+
+    /// Why the test push cannot be sent right now (footer text), or nil if it can.
+    private func testPushBlocker(_ dashboard: DashboardModel?) -> String? {
+        if !AppConfig.isServerConfigured {
+            return "Test-Push braucht einen konfigurierten Server."
+        }
+        if dashboardStore.isOffline {
+            return "Offline: Test-Push nicht möglich."
+        }
+        guard case .registered = state.registration else {
+            return "Test-Push braucht einen registrierten Push-Token."
+        }
+        if dashboard?.push?.testPushAvailable != true {
+            return "Der Server bietet noch keinen Test-Push an (Daten neu laden)."
+        }
+        return nil
+    }
+
+    private var testPushDetail: String? {
+        switch testPush {
+        case .idle, .sending:
+            return nil
+        case .sent(let date):
+            return "Apple hat angenommen, \(BIOSFormat.time(date)). Mitteilung sollte gleich erscheinen."
+        case .failed(let message):
+            return message
+        }
+    }
+
+    private var testPushSymbol: String {
+        switch testPush {
+        case .idle: return "paperplane"
+        case .sending: return "hourglass"
+        case .sent: return "checkmark.circle.fill"
+        case .failed: return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var testPushTint: Color {
+        switch testPush {
+        case .idle, .sending: return BIOSTheme.accent
+        case .sent: return BIOSTheme.good
+        case .failed: return BIOSTheme.bad
+        }
+    }
+
+    private func sendTestPush() async {
+        guard case .registered(let token) = state.registration,
+              let client = APIClient.fromConfig() else { return }
+        testPush = .sending
+        do {
+            let result = try await client.sendTestPush(token: token)
+            testPush = result.accepted ? .sent(Date()) : .failed(Self.rejectionText(result))
+        } catch {
+            testPush = ErrorKind.isCancellation(error) ? .idle : .failed(Self.errorText(error))
+        }
+    }
+
+    private static func rejectionText(_ result: TestPushResult) -> String {
+        var parts: [String] = []
+        if let status = result.apnsStatus { parts.append("HTTP \(status)") }
+        if let reason = result.apnsReason { parts.append(reason) }
+        var text = "Apple lehnt ab" + (parts.isEmpty ? "" : " (" + parts.joined(separator: ", ") + ")")
+        if result.removed { text += ", Token am Server entfernt" }
+        return text
+    }
+
+    private static func errorText(_ error: Error) -> String {
+        if ErrorKind.isOffline(error) { return "Keine Verbindung" }
+        if let apiError = error as? APIError {
+            switch apiError {
+            case .http(429): return "Höchstens ein Test-Push pro Minute, bitte kurz warten."
+            case .http(404): return "Dieses Gerät ist am Server nicht registriert."
+            case .http(503): return "APNs ist am Server nicht eingerichtet."
+            case .http(502): return "Apple ist gerade nicht erreichbar."
+            default: return apiError.localizedDescription
+            }
+        }
+        return error.localizedDescription
+    }
+
     private var freshnessFooter: String {
         if dashboardStore.showsStaleData {
             let stand = dashboardStore.fetchedAt.map { " von \(BIOSFormat.relative($0))" } ?? ""
@@ -211,6 +314,38 @@ struct StatusRow: View {
             }
         }
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// "Test-Push senden": button row with symbol, title and the last result.
+struct TestPushRow: View {
+    let title: String
+    let detail: String?
+    let symbol: String
+    let tint: Color
+    let enabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Image(systemName: symbol)
+                    .foregroundStyle(enabled ? tint : BIOSTheme.text3)
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .foregroundStyle(enabled ? BIOSTheme.accent : BIOSTheme.text3)
+                    if let detail {
+                        Text(detail)
+                            .font(.footnote)
+                            .foregroundStyle(BIOSTheme.text2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        .disabled(!enabled)
+        .accessibilityHint("Schickt eine Test-Mitteilung nur an dieses Gerät")
     }
 }
 
