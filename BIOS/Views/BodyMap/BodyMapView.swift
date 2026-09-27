@@ -305,6 +305,9 @@ struct BodyMapLayerContent: View {
             .accessibilityElement(children: .contain)
             .accessibilityLabel("\(BodyMapStyle.title), \(layer.label), \(BodyMapStyle.sideSpoken(side))")
             layerControls
+            if !model.overview.isEmpty {
+                BodyMapOverviewGrid(metrics: model.overview)
+            }
             Text(model.note)
                 .font(.caption)
                 .foregroundStyle(BIOSTheme.text2)
@@ -691,7 +694,7 @@ struct BodyMapMetricRow: View {
                 .monospacedDigit()
                 .foregroundStyle(BIOSTheme.text1)
         } else if metric.status == .keineDaten {
-            Text(BodyMapStatus.keineDaten.label)
+            Text(metric.statusLabel)
                 .font(.subheadline)
                 .foregroundStyle(BIOSTheme.text3)
         }
@@ -808,5 +811,58 @@ struct BodyMapTodayCard: View {
             return "\(counts.ok) Regionen im Rahmen, \(counts.keineDaten) noch ohne Daten"
         }
         return nil
+    }
+}
+
+// MARK: - Layer overview
+
+/// `overview[]` of a layer (muscles: sessions, unmapped sessions, Whoop days,
+/// muscle mass; demo: lean mass, FFMI, ALMI) as small tiles under the layer
+/// control. Same metric format as the region sheet.
+struct BodyMapOverviewGrid: View {
+    let metrics: [BodyMapMetric]
+
+    private let columns = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
+
+    var body: some View {
+        LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
+            ForEach(metrics) { metric in
+                tile(metric)
+            }
+        }
+    }
+
+    private func tile(_ metric: BodyMapMetric) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(metric.label)
+                .font(.caption)
+                .foregroundStyle(BIOSTheme.text2)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Image(systemName: metric.status.symbol)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(metric.status.color)
+                Text(metric.valueText ?? metric.statusLabel)
+                    .font(.subheadline.weight(.semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(metric.valueText == nil ? BIOSTheme.text3 : BIOSTheme.text1)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            if let detail = metric.detailText {
+                Text(detail)
+                    .font(.caption2)
+                    .foregroundStyle(BIOSTheme.text3)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(metric.spokenLabel)
     }
 }

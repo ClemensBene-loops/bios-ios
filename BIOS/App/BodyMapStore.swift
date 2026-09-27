@@ -4,7 +4,7 @@ import os
 /// Loads `GET /v1/bodymap` (one store per layer and demo flag) and keeps the
 /// last good response on disk, like the dashboard: the Körper tab shows the
 /// last state offline with its "Stand". A server without the endpoint (HTTP
-/// 404), or without the requested layer (answers another `layer`), is not an
+/// 404), or without the requested layer (answers another `layer`, or 422), is not an
 /// error: the map says "noch nicht verfügbar".
 ///
 /// `shared` is the systems layer (DiskCache key "bodymap", as before), used by
@@ -118,7 +118,9 @@ final class BodyMapStore: ObservableObject {
             }
         } catch {
             if !ErrorKind.isCancellation(error) {
-                if let apiError = error as? APIError, apiError == .http(404) {
+                // 404: no endpoint; 422 for another layer: the server does not know it.
+                if let apiError = error as? APIError,
+                   apiError == .http(404) || (!isSystems && apiError == .http(422)) {
                     isUnavailable = true
                     isOffline = false
                     lastError = BodyMapStyle.unavailableTitle

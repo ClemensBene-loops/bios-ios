@@ -43,6 +43,8 @@ struct BodyMapMetric: Identifiable {
     let deltaUnit: String?
     let display: String?
     let status: BodyMapStatus
+    /// Server `status_label` (e.g. "Unklar" for keine_daten), else the app word.
+    let statusLabel: String
 
     init?(json: JSONValue, index: Int) {
         guard json.objectValue != nil else { return nil }
@@ -55,6 +57,8 @@ struct BodyMapMetric: Identifiable {
         deltaUnit = json.str("delta_unit")
         display = json.str("display")
         status = BodyMapStatus(key: json.str("status"))
+        statusLabel = BodyMapStatus(rawValue: json.str("status") ?? "") != nil
+            ? (json.str("status_label") ?? status.label) : status.label
     }
 
     private static func digits(_ number: Double) -> Int {
@@ -83,7 +87,7 @@ struct BodyMapMetric: Identifiable {
         var parts = [label]
         if let valueText { parts.append(valueText) }
         if let detailText { parts.append(detailText) }
-        parts.append(status.spoken)
+        parts.append(statusLabel == status.label ? status.spoken : statusLabel.lowercased())
         return parts.joined(separator: ", ")
     }
 }
@@ -155,7 +159,7 @@ struct BodyMapRegion: Identifiable {
 
     /// "Lunge, beobachten: Atemfrequenz erhöht (+1,4 /min)."
     var spokenLabel: String {
-        "\(label), \(status.spoken): \(reason)"
+        "\(label), \(statusLabel == status.label ? status.spoken : statusLabel.lowercased()): \(reason)"
     }
 
     private static func unit(_ value: Double?) -> CGFloat? {
@@ -308,6 +312,8 @@ struct BodyMapModel {
     let regions: [BodyMapRegion]
     let summary: BodyMapSummaryModel?
     let errors: [String]
+    /// `overview[]` (muscles layer): metrics in the region format for a header row.
+    let overview: [BodyMapMetric]
 
     init(json: JSONValue) {
         schemaVersion = json.int("schema_version")
@@ -323,6 +329,7 @@ struct BodyMapModel {
             .filter { seen.insert($0.id).inserted }
         summary = json.obj("summary").map { BodyMapSummaryModel(json: $0) }
         errors = json.strings("errors")
+        overview = json.list("overview").enumerated().compactMap { BodyMapMetric(json: $0.element, index: $0.offset) }
     }
 
     var isSystems: Bool {
