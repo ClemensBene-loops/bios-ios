@@ -172,8 +172,13 @@ rule, nothing is pushed.
   non-systems layers every region id is drawn from the server's own `label`,
   `shapes`, `anchor` and `view` (no bundled layout, no id filter). The `note` of the
   response is shown under the map; `demo: true` shows a "Beispieldaten" banner over
-  the figure and in the region sheet. A server that answers another `layer` (older
-  server ignoring the parameter) or 404 shows "Muskeln: noch nicht verfügbar".
+  the figure and in the region sheet. `overview[]` (muscles: sessions, unmapped
+  sessions, Whoop days, muscle mass; demo: lean mass, FFMI, ALMI; same metric
+  format as the regions) is shown as small tiles under the layer control. A
+  `status_label` from the server (e.g. "Unklar" for a `keine_daten` group trained
+  only by whole-body sessions) replaces the app word for regions and metrics. A
+  server that answers another `layer` (older server ignoring the parameter), 404
+  or 422 shows "Muskeln: noch nicht verfügbar".
   Layer and demo choice are remembered (`@AppStorage`).
 
 ### Quick log ("+" on Heute)
