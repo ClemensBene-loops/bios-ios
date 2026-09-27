@@ -180,12 +180,49 @@ struct BodyMapStatusBadge: View {
 
 // MARK: - Körper tab
 
-/// Top of the Körper tab: map card with front/back toggle, legend, region
-/// list; tap opens the region sheet. Observes only the body map store.
+/// Top of the Körper tab: picks the layer (Systeme, Muskeln, or whatever the
+/// server lists in `layers`) and shows that layer's store. The Heute card
+/// stays on the systems layer (`BodyMapStore.shared`).
 struct BodyMapSection: View {
-    @ObservedObject private var store = BodyMapStore.shared
-    @EnvironmentObject private var router: Router
+    @ObservedObject private var systems = BodyMapStore.shared
+    @AppStorage("bios.bodymap.layer") private var layerID = BodyMapLayerOption.systemsID
+    @AppStorage("bios.bodymap.demo") private var demo = false
     @State private var side: BodyMapSide = .front
+
+    private var layers: [BodyMapLayerOption] {
+        systems.model?.layers ?? BodyMapLayerOption.defaults
+    }
+
+    private var layer: BodyMapLayerOption {
+        layers.first { $0.id == layerID } ?? layers.first ?? BodyMapLayerOption.defaults[0]
+    }
+
+    var body: some View {
+        let current = layer
+        let useDemo = demo && !current.isSystems
+        BodyMapLayerContent(
+            store: BodyMapStore.store(layer: current.id, demo: useDemo),
+            layer: current,
+            layers: layers,
+            layerID: $layerID,
+            demo: $demo,
+            side: $side
+        )
+        .id(BodyMapStore.cacheKey(layer: current.id, demo: useDemo))
+    }
+}
+
+/// Map card with front/back toggle, layer control under the figure, legend,
+/// region list of one layer; tap opens the region sheet.
+struct BodyMapLayerContent: View {
+    @ObservedObject var store: BodyMapStore
+    let layer: BodyMapLayerOption
+    let layers: [BodyMapLayerOption]
+    @Binding var layerID: String
+    @Binding var demo: Bool
+    @Binding var side: BodyMapSide
+
+    @EnvironmentObject private var router: Router
     @State private var selected: BodyMapRegion?
     @State private var pendingRoute: DetailRoute?
 
@@ -196,7 +233,13 @@ struct BodyMapSection: View {
                 SectionHeader(title: BodyMapStyle.listTitle)
                 regionList(model)
             } else if store.isUnavailable {
-                NotEvaluableBox(title: BodyMapStyle.unavailableTitle, text: BodyMapStyle.unavailableText)
+                if layer.isSystems {
+                    NotEvaluableBox(title: BodyMapStyle.unavailableTitle, text: BodyMapStyle.unavailableText)
+                } else {
+                    NotEvaluableBox(title: BodyMapStyle.layerUnavailableTitle(layer.label),
+                                    text: BodyMapStyle.layerUnavailableText)
+                }
+                layerControls.biosCard()
             } else if store.isLoading || store.lastError == nil {
                 HStack(spacing: 10) {
                     ProgressView()
@@ -205,8 +248,10 @@ struct BodyMapSection: View {
                         .foregroundStyle(BIOSTheme.text2)
                 }
                 .biosCard()
+                layerControls.biosCard()
             } else {
                 NotEvaluableBox(title: BodyMapStyle.noDataTitle, text: store.lastError)
+                layerControls.biosCard()
             }
         }
         .sheet(item: $selected, onDismiss: {
@@ -215,7 +260,7 @@ struct BodyMapSection: View {
                 router.koerperPath.append(route)
             }
         }) { region in
-            BodyMapRegionSheet(region: region) { route in
+            BodyMapRegionSheet(region: region, demo: store.model?.demo == true) { route in
                 pendingRoute = route
                 selected = nil
             }
@@ -246,6 +291,9 @@ struct BodyMapSection: View {
                     sidePicker
                 }
             }
+            if model.demo {
+                demoBanner
+            }
             BodyMapFigure(regions: model.regions, side: side, selectedID: selected?.id) { region in
                 open(region)
             }
@@ -255,13 +303,22 @@ struct BodyMapSection: View {
                                center: .center, startRadius: 0, endRadius: BodyMapStyle.largeHeight * 0.55)
             )
             .accessibilityElement(children: .contain)
-            .accessibilityLabel("\(BodyMapStyle.title), \(BodyMapStyle.sideSpoken(side))")
-            legend
-            Text(BodyMapStyle.sideNote(side))
+            .accessibilityLabel("\(BodyMapStyle.title), \(layer.label), \(BodyMapStyle.sideSpoken(side))")
+            layerControls
+            Text(model.note)
                 .font(.caption)
-                .foregroundStyle(BIOSTheme.text3)
+                .foregroundStyle(BIOSTheme.text2)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity)
+                .fixedSize(horizontal: false, vertical: true)
+            legend
+            if let note = sideNote(model) {
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(BIOSTheme.text3)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+            }
             if !model.errors.isEmpty {
                 Text("\(BodyMapStyle.partialErrors): \(model.errors.joined(separator: ", "))")
                     .font(.caption)
@@ -319,8 +376,68 @@ struct BodyMapSection: View {
         if store.showsStaleData {
             parts.append(store.isOffline ? "offline" : "nicht aktualisiert")
         }
-        parts.append(model.note)
-        return parts.joined(separator: " · ")
+        if model.demo {
+            parts.append(BodyMapStyle.demoBanner)
+        }
+        return parts.isEmpty ? BodyMapStyle.note : parts.joined(separator: " · ")
+    }
+
+    /// Where the regions of the other view are: the fixed systems text, for
+    /// other layers built from the server labels.
+    private func sideNote(_ model: BodyMapModel) -> String? {
+        if layer.isSystems {
+            return BodyMapStyle.sideNote(side)
+        }
+        let other = model.regions.filter { $0.side != side && !$0.shapes.isEmpty }.map(\.label)
+        return BodyMapStyle.sideNote(side, otherLabels: other)
+    }
+
+    /// Segmented control "Systeme | Muskeln" under the figure, plus
+    /// "Beispiel zeigen" for layers other than systems.
+    @ViewBuilder private var layerControls: some View {
+        VStack(spacing: 8) {
+            if layers.count > 1 {
+                Picker(BodyMapStyle.layerPickerTitle, selection: $layerID) {
+                    ForEach(layers) { option in
+                        Text(option.label).tag(option.id)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+            if !layer.isSystems {
+                Toggle(isOn: $demo) {
+                    Label(BodyMapStyle.demoToggle, systemImage: "testtube.2")
+                        .font(.subheadline)
+                        .foregroundStyle(BIOSTheme.text2)
+                }
+                .tint(BIOSTheme.mid)
+            }
+        }
+    }
+
+    /// Clear banner over the figure while example data is shown.
+    private var demoBanner: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "testtube.2")
+            VStack(alignment: .leading, spacing: 1) {
+                Text(BodyMapStyle.demoBanner)
+                    .font(.subheadline.weight(.bold))
+                Text(BodyMapStyle.demoBannerText)
+                    .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(BIOSTheme.midText)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(BIOSTheme.mid.opacity(0.16), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(BIOSTheme.mid.opacity(0.5), lineWidth: 1)
+        )
+        .accessibilityElement(children: .combine)
     }
 
     private func regionList(_ model: BodyMapModel) -> some View {
@@ -385,6 +502,7 @@ struct BodyMapRegionRow: View {
 /// Text styles only, so it follows Dynamic Type.
 struct BodyMapRegionSheet: View {
     let region: BodyMapRegion
+    var demo = false
     let onLink: (DetailRoute) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -405,6 +523,13 @@ struct BodyMapRegionSheet: View {
                     .font(.body.weight(.semibold))
                     .buttonStyle(.bordered)
                     .tint(BIOSTheme.text1)
+                }
+
+                if demo {
+                    Label(BodyMapStyle.demoBanner + ": " + BodyMapStyle.demoBannerText, systemImage: "testtube.2")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(BIOSTheme.midText)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 statusBox

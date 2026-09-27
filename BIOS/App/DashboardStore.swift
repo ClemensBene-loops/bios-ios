@@ -68,6 +68,8 @@ final class DashboardStore: ObservableObject {
             isOffline = false
             isSample = false
             DiskCache.save(Self.cacheKey, value: json, fetchedAt: now)
+            // Lock screen widgets fetch the server themselves; new data = reload them.
+            LockScreenWidgets.reload()
         } catch {
             if !ErrorKind.isCancellation(error) {
                 isOffline = ErrorKind.isOffline(error)

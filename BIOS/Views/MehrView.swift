@@ -68,6 +68,8 @@ struct MehrView: View {
                 }
             }
 
+            LockScreenWidgetSection()
+
             LiveActivitySection()
 
             Section {

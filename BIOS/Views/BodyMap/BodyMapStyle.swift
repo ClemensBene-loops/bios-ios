@@ -66,6 +66,42 @@ enum BodyMapStyle {
         side == .front ? "Niere und Knochen: Ansicht Hinten" : "Übrige Regionen: Ansicht Vorne"
     }
 
+    /// Same hint for any layer, from the labels of the regions on the other
+    /// side ("Gesäß und Waden: Ansicht Hinten"); nil when there are none.
+    static func sideNote(_ side: BodyMapSide, otherLabels: [String]) -> String? {
+        guard !otherLabels.isEmpty else { return nil }
+        let other = side == .front ? "Ansicht Hinten" : "Ansicht Vorne"
+        if otherLabels.count > 3 {
+            return "\(otherLabels.count) weitere Regionen: \(other)"
+        }
+        let names = otherLabels.count == 1
+            ? otherLabels[0]
+            : otherLabels.dropLast().joined(separator: ", ") + " und " + otherLabels[otherLabels.count - 1]
+        return "\(names): \(other)"
+    }
+
+    // MARK: Layers
+
+    static let layerPickerTitle = "Ebene"
+    static let demoToggle = "Beispiel zeigen"
+    static let demoBanner = "Beispieldaten"
+    static let demoBannerText = "Erfundene Werte zum Ansehen der Ansicht, nicht deine Daten."
+
+    /// Fallback labels of the layers when the server sends none.
+    static func layerLabel(_ id: String) -> String {
+        switch id {
+        case "systems": return "Systeme"
+        case "muscles": return "Muskeln"
+        default: return id.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
+    static func layerUnavailableTitle(_ label: String) -> String {
+        "\(label): noch nicht verfügbar"
+    }
+
+    static let layerUnavailableText = "Der Server liefert diese Ebene noch nicht. Sie erscheint nach dem Server-Update von selbst."
+
     /// Fallback labels when the server sends none.
     static func regionLabel(_ id: String) -> String {
         switch id {
@@ -78,6 +114,19 @@ enum BodyMapStyle {
         case "niere": return "Niere"
         case "muskeln": return "Muskeln"
         case "knochen": return "Knochen"
+        // Muscles layer (the server label wins).
+        case "brust": return "Brust"
+        case "schultern": return "Schultern"
+        case "bizeps": return "Bizeps"
+        case "trizeps": return "Trizeps"
+        case "unterarme": return "Unterarme"
+        case "bauch": return "Bauch"
+        case "ruecken_oben": return "Oberer Rücken"
+        case "ruecken_unten": return "Unterer Rücken"
+        case "gesaess": return "Gesäß"
+        case "oberschenkel_vorne": return "Oberschenkel vorne"
+        case "oberschenkel_hinten": return "Oberschenkel hinten"
+        case "waden": return "Waden"
         default: return id.replacingOccurrences(of: "_", with: " ").capitalized
         }
     }

@@ -90,7 +90,7 @@ final class WhoopRefreshStore: ObservableObject {
     static func reloadAll() async {
         await DashboardStore.shared.refresh(force: true)
         await SeriesStore.shared.refreshLoaded()
-        await BodyMapStore.shared.refresh(force: true)
+        await BodyMapStore.refreshAll(force: true)
     }
 
     // MARK: - Internals

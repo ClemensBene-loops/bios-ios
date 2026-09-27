@@ -85,25 +85,29 @@ jobs:
           xcodegen generate
 
       # Optional build-time config (GitHub secrets, may be empty). Written into
-      # the runner's copy of Config/Info.plist only; never committed.
+      # the runner's copies of Config/Info.plist (app) and BIOSWidgets/Info.plist
+      # (lock screen widgets, they fetch the server themselves); never committed.
       - name: Inject app config
         env:
           BIOS_API_BASE_URL: ${{ secrets.BIOS_API_BASE_URL }}
           BIOS_API_SECRET: ${{ secrets.BIOS_API_SECRET }}
         run: |
-          if [ -n "$BIOS_API_BASE_URL" ]; then
-            plutil -replace BIOSAPIBaseURL -string "$BIOS_API_BASE_URL" Config/Info.plist
-            echo "BIOS_API_BASE_URL injected."
-          else
-            echo "BIOS_API_BASE_URL not set, leaving it empty."
-          fi
-          if [ -n "$BIOS_API_SECRET" ]; then
-            plutil -replace BIOSAPISecret -string "$BIOS_API_SECRET" Config/Info.plist
-            echo "BIOS_API_SECRET injected."
-          else
-            echo "BIOS_API_SECRET not set, leaving it empty."
-          fi
-          plutil -lint Config/Info.plist
+          set -eo pipefail
+          for PLIST in Config/Info.plist BIOSWidgets/Info.plist; do
+            if [ -n "$BIOS_API_BASE_URL" ]; then
+              plutil -replace BIOSAPIBaseURL -string "$BIOS_API_BASE_URL" "$PLIST"
+              echo "BIOS_API_BASE_URL injected into $PLIST."
+            else
+              echo "BIOS_API_BASE_URL not set, leaving it empty in $PLIST."
+            fi
+            if [ -n "$BIOS_API_SECRET" ]; then
+              plutil -replace BIOSAPISecret -string "$BIOS_API_SECRET" "$PLIST"
+              echo "BIOS_API_SECRET injected into $PLIST."
+            else
+              echo "BIOS_API_SECRET not set, leaving it empty in $PLIST."
+            fi
+            plutil -lint "$PLIST"
+          done
 
       - name: Install Project Dependencies
         run: bundle install

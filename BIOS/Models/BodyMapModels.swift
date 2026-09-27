@@ -116,9 +116,12 @@ struct BodyMapRegion: Identifiable {
     let metrics: [BodyMapMetric]
     let links: [BodyMapLink]
 
-    init?(json: JSONValue) {
+    /// `useLayout`: fall back to the bundled systems layout for missing
+    /// geometry. Off for other layers (muscles): any region id is rendered
+    /// from the server's own `shapes` / `anchor` / `label`.
+    init?(json: JSONValue, useLayout: Bool = true) {
         guard let id = json.str("id") else { return nil }
-        let layout = BodyMapLayout.region(id)
+        let layout = useLayout ? BodyMapLayout.region(id) : nil
         self.id = id
         label = json.str("label") ?? BodyMapStyle.regionLabel(id)
         side = json.str("view").map { BodyMapSide(key: $0) } ?? layout?.side ?? .front
@@ -249,10 +252,58 @@ struct BodyMapSummaryModel {
     }
 }
 
+/// One layer of the body map (segmented control under the figure). The
+/// server may list them in `layers` (strings or objects `{id, label}`);
+/// without it the app offers Systeme and Muskeln.
+struct BodyMapLayerOption: Identifiable, Hashable {
+    /// Layer of the plain `GET /v1/bodymap` (no `layer` parameter).
+    static let systemsID = "systems"
+    static let musclesID = "muscles"
+
+    static let defaults = [
+        BodyMapLayerOption(id: systemsID, label: BodyMapStyle.layerLabel(systemsID)),
+        BodyMapLayerOption(id: musclesID, label: BodyMapStyle.layerLabel(musclesID)),
+    ]
+
+    let id: String
+    let label: String
+
+    var isSystems: Bool { id == Self.systemsID }
+
+    init(id: String, label: String) {
+        self.id = id
+        self.label = label
+    }
+
+    init?(json: JSONValue) {
+        if let raw = json.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
+            let id = raw.lowercased()
+            self.init(id: id, label: BodyMapStyle.layerLabel(id))
+            return
+        }
+        guard let raw = json.str("id") ?? json.str("key") ?? json.str("layer") else { return nil }
+        let id = raw.lowercased()
+        self.init(id: id, label: json.str("label") ?? BodyMapStyle.layerLabel(id))
+    }
+
+    /// Server list (deduplicated), else the defaults.
+    static func list(_ json: [JSONValue]) -> [BodyMapLayerOption] {
+        var seen = Set<String>()
+        let parsed = json.compactMap { BodyMapLayerOption(json: $0) }.filter { seen.insert($0.id).inserted }
+        return parsed.isEmpty ? defaults : parsed
+    }
+}
+
 /// `GET /v1/bodymap`.
 struct BodyMapModel {
     let schemaVersion: Int?
     let generatedAt: Date?
+    /// `layer` of the response (nil = older server: systems).
+    let layer: String?
+    /// Invented example values (`demo: true`, requested with `demo=1`).
+    let demo: Bool
+    /// `layers` of the response, nil when the server sends none.
+    let layers: [BodyMapLayerOption]?
     let note: String
     let regions: [BodyMapRegion]
     let summary: BodyMapSummaryModel?
@@ -261,11 +312,21 @@ struct BodyMapModel {
     init(json: JSONValue) {
         schemaVersion = json.int("schema_version")
         generatedAt = BIOSDate.parse(json.str("generated_at"))
+        layer = json.str("layer")?.lowercased()
+        demo = json.flag("demo")
+        let rawLayers = json.list("layers")
+        layers = rawLayers.isEmpty ? nil : BodyMapLayerOption.list(rawLayers)
         note = json.str("note") ?? BodyMapStyle.note
+        let useLayout = (layer ?? BodyMapLayerOption.systemsID) == BodyMapLayerOption.systemsID
         var seen = Set<String>()
-        regions = json.list("regions").compactMap { BodyMapRegion(json: $0) }.filter { seen.insert($0.id).inserted }
+        regions = json.list("regions").compactMap { BodyMapRegion(json: $0, useLayout: useLayout) }
+            .filter { seen.insert($0.id).inserted }
         summary = json.obj("summary").map { BodyMapSummaryModel(json: $0) }
         errors = json.strings("errors")
+    }
+
+    var isSystems: Bool {
+        (layer ?? BodyMapLayerOption.systemsID) == BodyMapLayerOption.systemsID
     }
 
     /// Region list order: auffällig, beobachten, ok, keine Daten; server order within a status.

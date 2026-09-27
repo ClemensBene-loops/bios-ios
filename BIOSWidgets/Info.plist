@@ -22,6 +22,15 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<!-- BIOS server config for the lock screen widgets (they fetch
+	     GET /v1/live-activity themselves, no App Group). Empty in git; workflow 4
+	     fills them like Config/Info.plist from the GitHub secrets
+	     BIOS_API_BASE_URL / BIOS_API_SECRET (plutil, CI only). Read via
+	     AppConfig (Shared/); empty = fallback to the app's Info.plist. -->
+	<key>BIOSAPIBaseURL</key>
+	<string></string>
+	<key>BIOSAPISecret</key>
+	<string></string>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionPointIdentifier</key>

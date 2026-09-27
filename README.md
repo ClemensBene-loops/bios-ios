@@ -17,7 +17,7 @@ repo (`api/server.py`, `api/dashboard.py`, `api/series.py`, `api/intake.py`,
 |---|---|
 | Display name | BIOS |
 | App Store Connect record | BIOS Health |
-| Bundle ID | `at.bene.bios`, widget extension `at.bene.bios.widgets` (Live Activity) |
+| Bundle ID | `at.bene.bios`, widget extension `at.bene.bios.widgets` (lock screen widgets, Live Activity) |
 | Team ID | `D457V2W8RG` (not a secret, also in `Config/Base.xcconfig`) |
 | Minimum iOS | 17.0, iPhone only, portrait |
 | Version | `MARKETING_VERSION` 2.0 (`project.yml`), build number = latest TestFlight build + 1 |
@@ -162,6 +162,19 @@ rule, nothing is pushed.
   assets.
 - **One place for changes**: colors, opacities, sizes and texts in
   `BIOS/Views/BodyMap/BodyMapStyle.swift`, geometry in `BodyMapShapes.swift`.
+- **Layers**: a segmented control under the figure switches "Systeme | Muskeln"
+  (the server's `layers`, strings or `{id, label}`, when present; else these
+  two). Systeme = plain `GET /v1/bodymap` (`BodyMapStore.shared`, cache
+  `bodymap`, also the Heute card, which always stays on systems). Other layers =
+  `GET /v1/bodymap?layer=<id>`, with `&demo=1` while "Beispiel zeigen" is on; one
+  store and one cache per layer and demo flag (`bodymap_muscles`,
+  `bodymap_muscles_demo`), so example data never replaces real data. For
+  non-systems layers every region id is drawn from the server's own `label`,
+  `shapes`, `anchor` and `view` (no bundled layout, no id filter). The `note` of the
+  response is shown under the map; `demo: true` shows a "Beispieldaten" banner over
+  the figure and in the region sheet. A server that answers another `layer` (older
+  server ignoring the parameter) or 404 shows "Muskeln: noch nicht verfügbar".
+  Layer and demo choice are remembered (`@AppStorage`).
 
 ### Quick log ("+" on Heute)
 
@@ -208,7 +221,38 @@ the APNs `thread-id` (`whoop` -> Heute + Infekt-Check, `outlook` -> Umwelt,
 `bios.tab` still land in the right place, and unknown values fall back instead of
 failing. There is no URL scheme; deep links come only from pushes.
 
+### Lock screen widgets (instead of the Live Activity)
+
+iOS cannot show a Live Activity on the lock screen only: it always sits in the
+Dynamic Island too, where Loop shows glucose. So BIOS uses WidgetKit lock screen
+widgets (`BIOSWidgets/BIOSStatusWidget.swift`, kind `BIOSStatusWidget`, same
+extension and App ID, no new capability):
+
+- `accessoryRectangular`: "BIOS 72 gut", infection status ("Infekt · Tag 4",
+  "Infekt-Frühzeichen", "37,8 °C · Erhöht", "Kein Infekt"), "Nächste 12:30 ·
+  Supplements 3/4". Never a medication name (lock screen is public), only the time.
+- `accessoryCircular`: score gauge with the level word (or "Infekt").
+- `accessoryInline`: "BIOS 49 · Infekt Tag 4", normal "BIOS 72 · gut · 12:30".
+- `systemSmall` (home screen): ring, level, status, next time, supplements.
+- **Data**: the extension fetches `GET /v1/live-activity` (`content_state`, same
+  keys as the Live Activity) itself with `BIOSAPIBaseURL` / `BIOSAPISecret`
+  (`Shared/AppConfig.swift`; workflow 4 injects them into `BIOSWidgets/Info.plist`
+  too, with the app's Info.plist as fallback). No App Group: the last good state
+  is kept in the extension's own UserDefaults and shown when offline ("Stand
+  HH:MM", dimmed after 2 h). Timeline policy `.after(30 min)`; the app calls
+  `WidgetCenter.reloadTimelines` after every successful dashboard refresh and
+  after "Genommen" (`LockScreenWidgets.reload()`).
+- **Add**: lock screen long press > Anpassen > Sperrbildschirm > Widgets > BIOS
+  (also explained in Mehr > "Sperrbildschirm-Widget statt Live Activity").
+
 ### Live Activity (lock screen, Dynamic Island)
+
+**Default off** (Mehr > Live Activity). A stored "on" from an earlier build is
+kept, with a hint in Mehr. While off, the app deletes the push-to-start token on
+the server (`DELETE /v1/live-activity/token/{token}`, also the last token of an
+earlier launch, persisted in UserDefaults), ends every running activity, ends at
+once any activity that still appears (a 06:30 push-to-start racing the delete)
+and never uploads its update token. So the 06:30 server start cannot bring it back.
 
 Widget extension `BIOSWidgets` (`at.bene.bios.widgets`, iOS 17). Lock screen banner:
 left the Gesundheits-Score ring (six pillar colors), right the current information
@@ -305,9 +349,10 @@ keys in its contract test.
   `UmweltView`, `MehrView`, `Details/`, `Charts/`, `BodyMap/` (`BodyMapShapes`
   layout and paths, `BodyMapStyle` colors and texts, `BodyMapView`), `QuickLogViews`,
   `AlcoholViews`, `BloodPressureViews`, `Theme`, `Components`.
-- `BIOS/Config/AppConfig.swift`: reads the build-time config from Info.plist.
-- `BIOSWidgets/`: widget extension (Live Activity views, `Info.plist`).
-- `Shared/`: compiled into the app and the extension: `BIOSActivityAttributes`
+- `BIOSWidgets/`: widget extension (lock screen widgets `BIOSStatusWidget`, Live
+  Activity views, `Info.plist`).
+- `Shared/`: compiled into the app and the extension: `AppConfig` (build-time
+  config from Info.plist, app or extension), `BIOSActivityAttributes`
   (content state, brand colors), `HealthRing` (pillar order and colors, ring
   geometry, ring view), Live Activity intents, `BrandAssets.xcassets`
   (mark `BIOSMark`).
@@ -383,9 +428,10 @@ Names only; values live in GitHub (and in the VM `.env` for the server side).
 - The org secrets reach this repo because it is public (on the free org plan org
   secrets are only available to public repos). If one shows up empty, check
   Organization > Settings > Secrets and variables > Actions > (secret) > Repository access.
-- `BIOS_API_BASE_URL` and `BIOS_API_SECRET` are written into the runner's copy of
-  `Config/Info.plist` with `plutil` in workflow 4 (keys `BIOSAPIBaseURL`,
-  `BIOSAPISecret`). In git both keys are empty (also in the compile check). Without
+- `BIOS_API_BASE_URL` and `BIOS_API_SECRET` are written into the runner's copies of
+  `Config/Info.plist` and `BIOSWidgets/Info.plist` (lock screen widgets) with
+  `plutil` in workflow 4 (keys `BIOSAPIBaseURL`, `BIOSAPISecret`). In git all
+  four values are empty (also in the compile check). Without
   them the app still builds, but shows "Server nicht konfiguriert" and uploads no token.
 - Rotating the secret: update the VM `.env`, restart `bios-api`, update the repo
   secret, run workflow 4, install the new build.
@@ -445,14 +491,14 @@ limit) or 503.
 | `POST /v1/devices`, `DELETE /v1/devices/{token}` | APNs token upload (unchanged from v1) |
 | `GET /v1/summary` | v1 screen (build 2), kept unchanged on the server |
 | `GET /v1/dashboard` | everything on Heute, Umwelt and Mehr: `health` (Gesundheits-Score), `infection` (hero, score, chips), `bodymap` (Heute card), `vitals`, `outlook`, `tiles`, `environment`, `freshness`, `push`, `events`, `intake`, `schema_version` |
-| `GET /v1/bodymap` | Körperkarte: `regions[]` (`id`, `label`, `view`, `status`, `reason`, `neutral`, `anchor`, `shapes[]`, `metrics[]`, `links[]`), `statuses[]` legend, `summary`, `layout_version`, `aspect`; contract in `docs/API_v1.md` (BIOS repo), section "Körperkarte", example `docs/fixtures/bodymap.json` |
+| `GET /v1/bodymap[?layer=muscles][&demo=1]` | Körperkarte: `layer`, `demo`, `layers`, `note`, `regions[]` (`id`, `label`, `view`, `status`, `reason`, `neutral`, `anchor`, `shapes[]`, `metrics[]`, `links[]`), `statuses[]` legend, `summary`, `layout_version`, `aspect`; contract in `docs/API_v1.md` (BIOS repo), section "Körperkarte", example `docs/fixtures/bodymap.json` |
 | `GET /v1/series?metric=...&days=...[&source=...]` | chart data: points, baseline band, reference lines, `flags`, `context_flags` |
 | `POST/DELETE/GET /v1/events` | alcohol marks per day |
 | `GET/PUT /v1/supplements`, `POST/GET /v1/intake` | supplement regimen and daily ticks |
 | `POST/GET /v1/medications`, `DELETE /v1/medications/{id}` | medication log |
 | `POST /v1/refresh`, `GET /v1/refresh` | pull to refresh: request a rate-limited Whoop pull, poll its state (`queued`, `reason`, `last_pull`, `next_allowed_at`, `pending`) |
 | `POST /v1/test-push` | test push to this device |
-| `POST /v1/live-activity/token`, `DELETE /v1/live-activity/token/{token}`, `GET /v1/live-activity` | Live Activity push tokens (`start`, `update`) and the current content state |
+| `POST /v1/live-activity/token`, `DELETE /v1/live-activity/token/{token}`, `GET /v1/live-activity` | Live Activity push tokens (`start`, `update`) and the current content state (also read by the lock screen widgets) |
 
 Rules the app relies on:
 

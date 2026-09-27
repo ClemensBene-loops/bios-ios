@@ -1,4 +1,5 @@
 import ActivityKit
+import WidgetKit
 import Foundation
 import os
 
@@ -21,6 +22,13 @@ import os
 //   starts none. Off: the app ends nothing for the night and may start one
 //   locally at any time; the server still sends no updates at night and ends
 //   its activity at 23:30.
+// - Default OFF: iOS cannot show a Live Activity on the lock screen only, it
+//   always appears in the Dynamic Island too, where Loop shows glucose. The
+//   lock screen widgets (BIOSWidgets/BIOSStatusWidget.swift) replace it. A
+//   stored "on" from an earlier build is kept (Mehr shows a hint). While off,
+//   the push-to-start token is deleted on the server (also the last one known
+//   from an earlier launch, persisted) and every activity that still appears
+//   (e.g. a 06:30 push-to-start that raced the delete) is ended at once.
 // No `NSSupportsLiveActivitiesFrequentUpdates`: the server updates at most
 // every hour (at the latest every 90 min), well inside the normal APNs budget.
 
@@ -90,7 +98,7 @@ final class LiveActivityController: ObservableObject {
         case failed(String)
     }
 
-    /// User toggle in Mehr (default on).
+    /// User toggle in Mehr (default off, a stored choice wins).
     @Published var isEnabled: Bool {
         didSet {
             guard isEnabled != oldValue else { return }
@@ -121,17 +129,28 @@ final class LiveActivityController: ObservableObject {
     private static let enabledKey = "bios.liveActivity.enabled"
     private static let snoozeKey = "bios.liveActivity.snooze"
     private static let nightPauseKey = "bios.liveActivity.nightPause"
+    /// Last push-to-start token seen, so "off" can delete it on the server
+    /// before iOS delivers the token again in this launch.
+    private static let startTokenKey = "bios.liveActivity.startToken"
 
     private var observing = false
     private var observedActivities: Set<String> = []
-    private var pushToStartToken: String?
+    private var pushToStartToken: String? {
+        didSet {
+            if let pushToStartToken {
+                UserDefaults.standard.set(pushToStartToken, forKey: Self.startTokenKey)
+            }
+        }
+    }
     /// activity id -> update token
     private var activityTokens: [String: String] = [:]
     /// Requests that succeeded ("POST|kind|token", "DELETE|token"), skipped on retry.
     private var done: Set<String> = []
 
     init() {
-        isEnabled = UserDefaults.standard.object(forKey: Self.enabledKey) as? Bool ?? true
+        // Default off (Dynamic Island belongs to Loop); only an explicit stored
+        // choice turns it on.
+        isEnabled = UserDefaults.standard.object(forKey: Self.enabledKey) as? Bool ?? false
         nightPauseEnabled = UserDefaults.standard.object(forKey: Self.nightPauseKey) as? Bool ?? false
         systemEnabled = ActivityAuthorizationInfo().areActivitiesEnabled
     }
@@ -287,12 +306,26 @@ final class LiveActivityController: ObservableObject {
         let id = activity.id
         guard !observedActivities.contains(id) else { return }
         observedActivities.insert(id)
+        // Off: an activity that still shows up (push-to-start before the token
+        // delete reached the server) is ended at once, its token never sent.
+        if !isEnabled {
+            Self.log.info("Live Activity \(id, privacy: .public) appeared while off, ending it")
+            Task { @MainActor in
+                await activity.end(nil, dismissalPolicy: .immediate)
+                await self.syncStartToken()
+                self.refreshRunning()
+            }
+        }
         Task { @MainActor in
             for await data in activity.pushTokenUpdates {
                 let token = Self.hex(data)
                 self.activityTokens[id] = token
                 Self.log.info("Activity token \(String(token.prefix(8)), privacy: .public)... for \(id, privacy: .public)")
-                await self.post(kind: "update", token: token, activityID: id)
+                if self.isEnabled {
+                    await self.post(kind: "update", token: token, activityID: id)
+                } else {
+                    await self.delete(token)
+                }
             }
         }
         Task { @MainActor in
@@ -313,12 +346,17 @@ final class LiveActivityController: ObservableObject {
 
     /// Push-to-start token: registered while the toggle is on and iOS allows
     /// Live Activities, removed otherwise.
+    /// Off: also the token stored from an earlier launch, so the server's
+    /// 06:30 push-to-start cannot bring the banner back.
     private func syncStartToken() async {
-        guard let token = pushToStartToken else { return }
         if isEnabled && systemEnabled {
+            guard let token = pushToStartToken else { return }
             done.remove("DELETE|\(token)")
             await post(kind: "start", token: token, activityID: nil)
-        } else {
+            return
+        }
+        let stored = UserDefaults.standard.string(forKey: Self.startTokenKey)
+        for token in Set([pushToStartToken, stored].compactMap { $0 }) {
             done.remove("POST|start|\(token)")
             await delete(token)
         }
@@ -326,6 +364,7 @@ final class LiveActivityController: ObservableObject {
 
     private func retryTokens() async {
         await syncStartToken()
+        guard isEnabled else { return }
         for (id, token) in activityTokens {
             await post(kind: "update", token: token, activityID: id)
         }
@@ -558,6 +597,7 @@ enum LiveActivityActions {
         let outcome = await plan.log(item)
         LiveActivityController.shared.clearSnooze(name)
         await LiveActivityController.shared.updateRunning(preferServer: outcome == .synced)
+        LockScreenWidgets.reload()
     }
 
     /// "Später": moves the shown intake by `minutes` (local only).
@@ -565,5 +605,16 @@ enum LiveActivityActions {
     static func later(medicationID: String?, name: String, minutes: Int) async {
         LiveActivityController.shared.snooze(name, minutes: minutes)
         await LiveActivityController.shared.updateRunning()
+    }
+}
+
+/// Lock screen widgets (BIOSWidgets/BIOSStatusWidget.swift): they fetch
+/// GET /v1/live-activity themselves; the app only asks WidgetKit to reload
+/// them after new data (a reload from the foreground app costs no budget).
+enum LockScreenWidgets {
+    static let kind = "BIOSStatusWidget"
+
+    static func reload() {
+        WidgetCenter.shared.reloadTimelines(ofKind: kind)
     }
 }
