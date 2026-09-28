@@ -116,6 +116,8 @@ struct DashboardModel {
     let vitals: DashboardVitalsModel?
     /// Körperkarte summary for the Heute card (optional; nil hides the card).
     let bodymap: BodyMapSummaryModel?
+    /// Last strength training (`training.strength`, V3c, optional; nil hides the line).
+    let strength: StrengthModel?
 
     /// Major schema version this app understands.
     static let supportedSchema = 1
@@ -136,6 +138,8 @@ struct DashboardModel {
         bodymap = json.obj("bodymap").map { BodyMapSummaryModel(json: $0) }
 
         let tiles = json.obj("tiles")
+        strength = StrengthModel(json: json.obj("training")?.obj("strength")
+            ?? tiles?.obj("training")?.obj("strength"))
         if let wien = tiles?.obj("viruses_wien") {
             virusesWien = VirusRegionModel(json: wien, key: "abwasser_wien")
         } else {

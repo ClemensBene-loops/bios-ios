@@ -35,6 +35,8 @@ struct BIOSApp: App {
                         await MedicationStore.shared.flush()
                         await MedicationPlanStore.shared.flush()
                         await VitalsStore.shared.flush()
+                        // Stupser buttons pressed while offline.
+                        await NudgeActionQueue.flush()
                         // Live Activity: start (fallback), refresh or end at night.
                         await LiveActivityController.shared.appBecameActive()
                     }

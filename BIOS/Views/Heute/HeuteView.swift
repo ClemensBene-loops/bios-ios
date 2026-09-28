@@ -82,6 +82,10 @@ struct HeuteView: View {
                     }
                 }
 
+                if let strength = dashboard?.strength, strength.headline != nil {
+                    StrengthLine(strength: strength)
+                }
+
                 Text("Beobachtung, keine Diagnose")
                     .font(.footnote)
                     .foregroundStyle(BIOSTheme.text2)
@@ -183,6 +187,36 @@ struct WhoopRefreshStatusLine: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
         }
+    }
+}
+
+/// Calm line "Letztes Krafttraining vor 3 Tagen" with the server's cautious note
+/// (`training.strength`, V3c). Neutral colors: a hint, never a warning.
+struct StrengthLine: View {
+    let strength: StrengthModel
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "dumbbell")
+                .font(.body)
+                .foregroundStyle(BIOSTheme.text2)
+                .frame(width: 34, height: 34)
+                .background(BIOSTheme.card2, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(strength.headline ?? "")
+                    .font(.subheadline)
+                    .foregroundStyle(BIOSTheme.text1)
+                if let note = strength.note {
+                    Text(note)
+                        .font(.footnote)
+                        .foregroundStyle(BIOSTheme.text2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .biosCard(padding: 14)
+        .accessibilityElement(children: .combine)
     }
 }
 

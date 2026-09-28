@@ -68,6 +68,8 @@ struct MehrView: View {
                 }
             }
 
+            NudgeSection()
+
             LockScreenWidgetSection()
 
             LiveActivitySection()
@@ -155,6 +157,7 @@ struct MehrView: View {
         .navigationTitle("Mehr")
         .refreshable {
             await dashboardStore.refresh(force: true)
+            await NudgeStore.shared.refresh(force: true)
         }
     }
 
