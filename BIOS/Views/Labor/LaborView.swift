@@ -37,8 +37,8 @@ struct LaborView: View {
 
                 LabStatusBanner()
 
-                if let phase = store.uploadPhase {
-                    LabUploadCard(phase: phase) { documentID in
+                if !store.uploads.isEmpty {
+                    LabUploadCard(items: store.uploads) { documentID in
                         segment = LaborSegment.befunde.rawValue
                         if let documentID {
                             router.laborPath.append(.document(documentID))
@@ -77,9 +77,10 @@ struct LaborView: View {
             LabRouteView(route: route)
         }
         .labImport(request: $importRequest)
-        .onChange(of: store.uploadPhase) { _, phase in
-            // The progress and the new document live in "Befunde".
-            if phase?.isRunning == true, currentSegment == .werte {
+        .onChange(of: store.isUploading) { _, uploading in
+            // The progress and the new documents live in "Befunde" (also after a
+            // multi-file import that finished while another tab was shown).
+            if currentSegment == .werte, uploading || !store.uploads.isEmpty {
                 withAnimation { segment = LaborSegment.befunde.rawValue }
             }
         }
@@ -311,7 +312,8 @@ struct LabSummaryChips: View {
     let review: LabReviewSummary
 
     var body: some View {
-        let statuses = overview.allMarkers.compactMap { $0.latest?.status }
+        // Device readings (fingerstick) have no lab reference: not counted here.
+        let statuses = overview.labMarkers.compactMap { $0.latest?.status }
         let normal = statuses.filter { $0 == .normal }.count
         let flagged = statuses.filter { $0.isFlagged }.count
         let noRef = statuses.filter { $0 == .keineReferenz }.count
@@ -357,7 +359,12 @@ struct LabGroupSection: View {
     }
 
     private var trailing: String {
-        let count = group.markers.count == 1 ? "1 Marker" : "\(group.markers.count) Marker"
+        let labCount = group.markers.filter { !$0.isDevice }.count
+        let deviceCount = group.markers.count - labCount
+        var count = labCount == 1 ? "1 Marker" : "\(labCount) Marker"
+        if deviceCount > 0 {
+            count = labCount == 0 ? "Messgerät" : count + " · Messgerät"
+        }
         if group.nFlagged > 0 {
             return "\(count) · \(group.nFlagged) außerhalb"
         }
@@ -366,10 +373,21 @@ struct LabGroupSection: View {
 }
 
 /// Marker row: name, date and reference, value with unit, tag, bar, sparkline.
+/// A device marker (fingerstick) shows its source instead of the reference bar
+/// and the time of the latest reading.
 struct LabMarkerRow: View {
     let marker: LabMarkerEntry
 
     var body: some View {
+        if marker.isDevice {
+            LabDeviceMarkerRow(marker: marker)
+        } else {
+            labRow
+        }
+    }
+
+    @ViewBuilder
+    private var labRow: some View {
         let point = marker.latest
         let status = point?.status ?? .unknown
         VStack(alignment: .leading, spacing: 8) {
@@ -448,6 +466,94 @@ struct LabMarkerRow: View {
         }
         text += ", \(meta)"
         return text
+    }
+}
+
+/// Fingerstick row: name, time of the latest reading, value, and the source
+/// ("aus Dexcom-Kalibrierung") where lab markers have their reference bar.
+struct LabDeviceMarkerRow: View {
+    let marker: LabMarkerEntry
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        Text(marker.name)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(BIOSTheme.text1)
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(BIOSTheme.text3)
+                    }
+                    Text(meta)
+                        .font(.caption)
+                        .foregroundStyle(BIOSTheme.text2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 6)
+                HStack(alignment: .firstTextBaseline, spacing: 3) {
+                    Text(valueText)
+                        .font(.title3.weight(.semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(BIOSTheme.text1)
+                    if let unit = marker.latest?.unit ?? marker.unit {
+                        Text(unit)
+                            .font(.caption)
+                            .foregroundStyle(BIOSTheme.text2)
+                    }
+                }
+            }
+            HStack(spacing: 10) {
+                HStack(spacing: 5) {
+                    Image(systemName: "drop")
+                        .font(.caption2.weight(.semibold))
+                    Text(source)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                }
+                .font(.caption)
+                .foregroundStyle(BIOSTheme.text2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                LabSparkline(values: marker.sparkline.map(\.value), status: .keineReferenz)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(spoken)
+        .accessibilityHint("Öffnet Verlauf und Vergleich mit dem Sensor")
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private var source: String {
+        marker.sourceLabel ?? "Messgerät, kein Laborwert"
+    }
+
+    private var valueText: String {
+        guard let point = marker.latest else { return "n. v." }
+        return LabFormat.value(point.value, decimals: marker.decimals, comparator: point.comparator, text: point.valueText)
+    }
+
+    /// "zuletzt 27.09.2026, 21:36 · 12 Werte".
+    private var meta: String {
+        guard let point = marker.latest else { return "kein Wert" }
+        var parts: [String] = []
+        if let measured = point.measuredAt {
+            parts.append("zuletzt " + BIOSFormat.timestamp(measured))
+        } else if let date = point.date {
+            parts.append("zuletzt " + LabFormat.fullDate(date))
+        }
+        if marker.nValues > 1 {
+            parts.append("\(marker.nValues) Werte")
+        }
+        return parts.isEmpty ? "ohne Datum" : parts.joined(separator: " · ")
+    }
+
+    private var spoken: String {
+        let unit = marker.latest?.unit ?? marker.unit ?? ""
+        return "\(marker.name): \(valueText) \(unit), \(meta), \(source), ohne Referenzbereich"
     }
 }
 

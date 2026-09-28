@@ -177,6 +177,12 @@ struct LabPoint: Identifiable, Equatable {
     let documentID: String?
     let resultID: String?
     let gmi: LabGMI?
+    /// Device markers (fingerstick): local time of the measurement (several per day).
+    let measuredAt: Date?
+    /// Device markers: "dexcom_kalibrierung", "dexcom_ereignis", "loop_kalibrierung".
+    let origin: String?
+    /// "aus Dexcom-Kalibrierung" etc.
+    let originLabel: String?
 
     init?(json: JSONValue?, index: Int = 0) {
         guard let json, json.objectValue != nil else { return nil }
@@ -200,8 +206,16 @@ struct LabPoint: Identifiable, Equatable {
         documentID = json.str("document_id")
         resultID = json.str("result_id")
         gmi = LabGMI(json: json.obj("gmi"))
-        id = resultID ?? "\(dateRaw ?? "punkt")-\(index)"
+        let measuredRaw = json.str("measured_at")
+        // A bare day would land at noon and pretend a time of day.
+        measuredAt = (measuredRaw?.count ?? 0) > 10 ? BIOSDate.parse(measuredRaw) : nil
+        origin = json.str("origin")
+        originLabel = json.str("origin_label")
+        id = resultID ?? "\(measuredRaw ?? dateRaw ?? "punkt")-\(index)"
     }
+
+    /// Time of the measurement, else the day (noon).
+    var when: Date? { measuredAt ?? date }
 
     /// Spirometry and similar: judged by the z-score (LLN -1,645).
     var usesZScore: Bool {
@@ -242,6 +256,18 @@ struct LabTarget: Equatable {
 struct LabSparkPoint: Equatable {
     let date: Date?
     let value: Double
+    /// Device markers only: time of the measurement.
+    var measuredAt: Date? = nil
+}
+
+/// `kind` of a marker: lab value (default) or a device reading.
+enum LabMarkerKind {
+    /// "messgeraet": fingerstick from the meter, no lab, no reference range.
+    static let device = "messgeraet"
+
+    static func isDevice(_ kind: String?) -> Bool {
+        (kind ?? "").lowercased() == device
+    }
 }
 
 /// `MarkerEntry` of the overview.
@@ -256,6 +282,10 @@ struct LabMarkerEntry: Identifiable, Equatable {
     let sparkline: [LabSparkPoint]
     let nValues: Int
     let target: LabTarget?
+    /// `kind` ("messgeraet" for the fingerstick), nil for lab markers.
+    let kind: String?
+    /// "aus Dexcom-Kalibrierung": shown instead of the reference bar.
+    let sourceLabel: String?
 
     init?(json: JSONValue) {
         guard let id = json.str("id") else { return nil }
@@ -268,11 +298,18 @@ struct LabMarkerEntry: Identifiable, Equatable {
         previous = LabPoint(json: json.obj("previous"))
         sparkline = json.list("sparkline").compactMap { point in
             guard let value = point.double("value") else { return nil }
-            return LabSparkPoint(date: BIOSDate.day(point.str("date")), value: value)
+            let measured = point.str("measured_at")
+            return LabSparkPoint(date: BIOSDate.day(point.str("date")), value: value,
+                                 measuredAt: (measured?.count ?? 0) > 10 ? BIOSDate.parse(measured) : nil)
         }
         nValues = json.int("n_values") ?? sparkline.count
         target = LabTarget(json: json.obj("target"))
+        kind = json.str("kind")
+        sourceLabel = json.str("source_label") ?? latest?.originLabel
     }
+
+    /// A device reading (fingerstick): no reference, never flagged.
+    var isDevice: Bool { LabMarkerKind.isDevice(kind) }
 }
 
 /// A group of the overview ("Stoffwechsel", "Blutfette", ...).
@@ -395,6 +432,8 @@ struct LabOverview: Equatable {
     let regions: [String: [String]]
     let nValues: Int
     let lastValueOn: String?
+    /// Number of fingerstick readings (device marker), additive.
+    let nDeviceValues: Int
 
     init(json: JSONValue) {
         schemaVersion = json.int("schema_version")
@@ -411,10 +450,16 @@ struct LabOverview: Equatable {
         self.regions = regions
         nValues = json.int("n_values") ?? groups.reduce(0) { $0 + $1.markers.count }
         lastValueOn = json.str("last_value_on")
+        nDeviceValues = json.int("n_device_values") ?? 0
     }
 
     var allMarkers: [LabMarkerEntry] {
         groups.flatMap(\.markers)
+    }
+
+    /// Lab markers only (device readings have no reference and no lab status).
+    var labMarkers: [LabMarkerEntry] {
+        allMarkers.filter { !$0.isDevice }
     }
 
     var hasValues: Bool {
@@ -450,6 +495,8 @@ struct LabMarkerInfo: Equatable {
     let decimals: Int
     let kind: String?
     let custom: Bool
+    /// Device markers: "aus Dexcom-Kalibrierung".
+    let sourceLabel: String?
 
     init(json: JSONValue?, fallbackID: String) {
         id = json?.str("id") ?? fallbackID
@@ -460,6 +507,77 @@ struct LabMarkerInfo: Equatable {
         decimals = max(0, min(4, json?.int("decimals") ?? 1))
         kind = json?.str("kind")
         custom = json?.flag("custom") ?? false
+        sourceLabel = json?.str("source_label")
+    }
+
+    var isDevice: Bool { LabMarkerKind.isDevice(kind) }
+}
+
+/// One fingerstick with the last CGM value before it (`links[].pairs[]`).
+struct LabCGMPair: Identifiable, Equatable {
+    let id: String
+    let measuredAt: Date?
+    let dateRaw: String?
+    let finger: Double
+    let cgm: Double
+    let cgmAt: Date?
+    /// CGM minus finger in mg/dL.
+    let diff: Double
+    /// Relative to the finger value, in %.
+    let diffPct: Double?
+
+    init?(json: JSONValue, index: Int) {
+        guard json.objectValue != nil, let finger = json.double("finger"), let cgm = json.double("cgm") else {
+            return nil
+        }
+        let measured = json.str("measured_at")
+        measuredAt = BIOSDate.parse(measured)
+        dateRaw = json.str("date")
+        self.finger = finger
+        self.cgm = cgm
+        cgmAt = BIOSDate.parse(json.str("cgm_at"))
+        diff = json.double("diff") ?? (cgm - finger)
+        diffPct = json.double("diff_pct") ?? (finger != 0 ? (cgm - finger) / finger * 100 : nil)
+        id = "\(measured ?? dateRaw ?? "paar")-\(index)"
+    }
+
+    var when: Date? { measuredAt ?? BIOSDate.day(dateRaw) }
+}
+
+/// `links[]` entry `cgm_vergleich` of the fingerstick marker: sensor vs finger.
+struct LabCGMComparison: Equatable {
+    let label: String?
+    let unit: String
+    let nValues: Int?
+    let nPairs: Int
+    let windowMin: Int?
+    /// Mean of |diff_pct| (MARD-like, no study MARD); only from 5 pairs.
+    let mardPct: Double?
+    /// Mean of diff in mg/dL (positive = sensor higher).
+    let biasMgDl: Double?
+    let evaluable: Bool
+    let reason: String?
+    /// Chronological.
+    let pairs: [LabCGMPair]
+
+    init?(json: JSONValue?) {
+        guard let json, json.objectValue != nil, (json.str("kind") ?? "") == "cgm_vergleich" else { return nil }
+        label = json.str("label")
+        unit = json.str("unit") ?? "mg/dL"
+        nValues = json.int("n_values")
+        windowMin = json.int("window_min")
+        let parsed = json.list("pairs").enumerated().compactMap { LabCGMPair(json: $0.element, index: $0.offset) }
+        pairs = parsed.sorted { ($0.when ?? .distantPast) < ($1.when ?? .distantPast) }
+        nPairs = json.int("n_pairs") ?? pairs.count
+        mardPct = json.double("mard_pct")
+        biasMgDl = json.double("bias_mg_dl")
+        evaluable = json.flag("evaluable", fallback: mardPct != nil)
+        reason = json.str("reason")
+    }
+
+    /// Summary only when the server judged it evaluable (>= 5 pairs).
+    var hasSummary: Bool {
+        evaluable && (mardPct != nil || biasMgDl != nil)
     }
 }
 
@@ -495,20 +613,34 @@ struct LabMarkerDetail: Equatable {
     let refs: [LabRefSpan]
     let target: LabTarget?
     let links: [LabGMI]
+    /// Fingerstick marker: sensor vs finger (`links[]` kind `cgm_vergleich`).
+    let cgmComparison: LabCGMComparison?
     let disclaimer: String?
     let generatedAt: Date?
 
     init(json: JSONValue, id: String) {
         marker = LabMarkerInfo(json: json.obj("marker"), fallbackID: id)
-        history = json.list("history").enumerated().compactMap { LabPoint(json: $0.element, index: $0.offset) }
+        let points = json.list("history").enumerated().compactMap { LabPoint(json: $0.element, index: $0.offset) }
+        // Chronological by the server; device readings sorted by their time to be safe.
+        if points.contains(where: { $0.measuredAt != nil }) {
+            history = points.sorted { ($0.when ?? .distantPast) < ($1.when ?? .distantPast) }
+        } else {
+            history = points
+        }
         refs = json.list("refs").enumerated().compactMap { LabRefSpan(json: $0.element, index: $0.offset) }
         target = LabTarget(json: json.obj("target"))
         links = json.list("links").compactMap { LabGMI(json: $0) }
+        cgmComparison = json.list("links").lazy.compactMap { LabCGMComparison(json: $0) }.first
         disclaimer = json.str("disclaimer")
         generatedAt = BIOSDate.parse(json.str("generated_at"))
     }
 
     var latest: LabPoint? { history.last }
+
+    /// A device marker (fingerstick), by `kind` or by its points' origin.
+    var isDevice: Bool {
+        marker.isDevice || cgmComparison != nil || (history.last?.origin != nil && history.last?.documentID == nil)
+    }
 
     /// The GMI link for today (HbA1c only).
     var gmiLink: LabGMI? {
@@ -622,6 +754,9 @@ struct LabDocument: Identifiable, Equatable {
     let nValues: Int
     let nReview: Int
     let summaryPoints: [String]
+    /// List only: id of an earlier document with mostly the same values (photo
+    /// and PDF of one report). Just a hint, nothing is merged.
+    let possibleDuplicateOf: String?
     /// nil in the list; the values of `GET /v1/labs/documents/{id}`.
     let values: [LabValue]?
 
@@ -642,6 +777,8 @@ struct LabDocument: Identifiable, Equatable {
         extractedAt = BIOSDate.parse(json.str("extracted_at"))
         confirmedAt = BIOSDate.parse(json.str("confirmed_at"))
         summaryPoints = json.strings("summary_points")
+        let duplicate = json.str("possible_duplicate_of")
+        possibleDuplicateOf = duplicate == id ? nil : duplicate
         if case .array(let items)? = json["values"] {
             values = items.enumerated().compactMap { LabValue(json: $0.element, index: $0.offset) }
         } else {

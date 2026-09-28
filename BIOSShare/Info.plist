@@ -34,9 +34,9 @@
 	<dict>
 		<key>NSExtensionAttributes</key>
 		<dict>
-			<!-- Exactly one PDF or one image (a lab report, a photo of it). -->
+			<!-- 1 to 10 PDFs or images (lab reports, photos of them); uploaded one after another. -->
 			<key>NSExtensionActivationRule</key>
-			<string>SUBQUERY (extensionItems, $extensionItem, SUBQUERY ($extensionItem.attachments, $attachment, ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "com.adobe.pdf" OR ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.image").@count == 1).@count == 1</string>
+			<string>SUBQUERY (extensionItems, $extensionItem, SUBQUERY ($extensionItem.attachments, $attachment, ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "com.adobe.pdf" OR ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.image").@count &gt;= 1 AND SUBQUERY ($extensionItem.attachments, $attachment, ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "com.adobe.pdf" OR ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.image").@count &lt;= 10).@count &gt;= 1</string>
 		</dict>
 		<key>NSExtensionPointIdentifier</key>
 		<string>com.apple.share-services</string>

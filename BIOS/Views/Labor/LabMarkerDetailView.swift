@@ -50,6 +50,17 @@ struct LabMarkerDetailView: View {
 
     @ViewBuilder
     private func content(_ detail: LabMarkerDetail) -> some View {
+        if detail.isDevice {
+            LabDeviceDetailContent(detail: detail, region: store.overview?.region(forGroup: detail.marker.group)) { region in
+                router.showBodyMapRegion(region)
+            }
+        } else {
+            labContent(detail)
+        }
+    }
+
+    @ViewBuilder
+    private func labContent(_ detail: LabMarkerDetail) -> some View {
         let marker = detail.marker
         let latest = detail.latest
 

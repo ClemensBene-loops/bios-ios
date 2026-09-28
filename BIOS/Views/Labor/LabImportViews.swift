@@ -3,10 +3,10 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-// Import from inside the app: "Befund importieren" -> PDF from Files, a photo from the library
-// or the camera. Photos and image files become JPEG, PDFs stay PDF. Before the
+// Import from inside the app: "Befund importieren" -> PDFs or images from Files, photos from the library
+// (up to 10 at once each) or the camera. Photos and image files become JPEG, PDFs stay PDF. Before the
 // very first upload a one-time notice explains the cloud extraction (stored
-// flag, never shown again). The upload itself: LabStore.upload -> LabUpload.
+// flag, never shown again). The upload itself: LabStore.enqueue (one after another) -> LabUpload.
 
 enum LabImportSource: String, Identifiable {
     case file
@@ -31,12 +31,12 @@ struct LabImportMenu: View {
             Button {
                 select(.file)
             } label: {
-                Label("PDF oder Bild aus Dateien", systemImage: "doc")
+                Label("PDFs oder Bilder aus Dateien", systemImage: "doc")
             }
             Button {
                 select(.photo)
             } label: {
-                Label("Foto auswählen", systemImage: "photo")
+                Label("Fotos auswählen", systemImage: "photo")
             }
             if UIImagePickerController.isSourceTypeAvailable(.camera) {
                 Button {
@@ -54,7 +54,7 @@ struct LabImportMenu: View {
         .buttonStyle(.borderedProminent)
         .tint(BIOSTheme.accent)
         .accessibilityLabel("Befund importieren")
-        .accessibilityHint("PDF aus Dateien, Foto auswählen oder aufnehmen")
+        .accessibilityHint("PDFs oder Bilder aus Dateien, Fotos auswählen oder aufnehmen, bis zu zehn auf einmal")
     }
 }
 
@@ -76,7 +76,7 @@ struct LabImportModifier: ViewModifier {
     @State private var showFiles = false
     @State private var showPhotos = false
     @State private var showCamera = false
-    @State private var photoItem: PhotosPickerItem?
+    @State private var photoItems: [PhotosPickerItem] = []
 
     func body(content: Content) -> some View {
         content
@@ -107,21 +107,20 @@ struct LabImportModifier: ViewModifier {
                     showNotice = false
                 }
             }
-            .fileImporter(isPresented: $showFiles, allowedContentTypes: [.pdf, .image], allowsMultipleSelection: false) { result in
+            .fileImporter(isPresented: $showFiles, allowedContentTypes: [.pdf, .image], allowsMultipleSelection: true) { result in
                 switch result {
                 case .success(let urls):
-                    if let url = urls.first {
-                        importFile(url)
-                    }
+                    importFiles(urls)
                 case .failure(let error):
                     LabStore.shared.reportPreparationError(name: "Datei", message: "Datei nicht geöffnet: \(error.localizedDescription)")
                 }
             }
-            .photosPicker(isPresented: $showPhotos, selection: $photoItem, matching: .images)
-            .onChange(of: photoItem) { _, item in
-                guard let item else { return }
-                photoItem = nil
-                importPhoto(item)
+            .photosPicker(isPresented: $showPhotos, selection: $photoItems, maxSelectionCount: LabImportPreparer.maxFiles,
+                          selectionBehavior: .ordered, matching: .images)
+            .onChange(of: photoItems) { _, items in
+                guard !items.isEmpty else { return }
+                photoItems = []
+                importPhotos(items)
             }
             .fullScreenCover(isPresented: $showCamera) {
                 LabCameraPicker { image in
@@ -142,56 +141,52 @@ struct LabImportModifier: ViewModifier {
         }
     }
 
-    // MARK: - Preparing the data
+    // MARK: - Queueing the files (read and converted one after another)
 
-    private func importFile(_ url: URL) {
-        let name = url.lastPathComponent
-        LabStore.shared.beginPreparing(name: name)
-        Task {
-            let prepared = await Task.detached(priority: .userInitiated) {
-                LabImportPreparer.prepareFile(url)
-            }.value
-            await finish(prepared, name: name)
+    private func importFiles(_ urls: [URL]) {
+        let jobs = urls.prefix(LabImportPreparer.maxFiles).map { url in
+            LabUploadJob(name: url.lastPathComponent) {
+                await Task.detached(priority: .userInitiated) {
+                    LabImportPreparer.prepareFile(url)
+                }.value
+            }
+        }
+        LabStore.shared.enqueue(Array(jobs))
+        if urls.count > LabImportPreparer.maxFiles {
+            LabStore.shared.reportPreparationError(
+                name: "\(urls.count - LabImportPreparer.maxFiles) weitere Dateien",
+                message: "Höchstens \(LabImportPreparer.maxFiles) Dateien auf einmal. Den Rest bitte danach senden."
+            )
         }
     }
 
-    private func importPhoto(_ item: PhotosPickerItem) {
-        let name = LabImportPreparer.photoName()
-        LabStore.shared.beginPreparing(name: name)
-        Task {
-            do {
-                guard let data = try await item.loadTransferable(type: Data.self) else {
-                    await finish(.failure("Das Foto ließ sich nicht laden."), name: name)
-                    return
+    private func importPhotos(_ items: [PhotosPickerItem]) {
+        let now = Date()
+        let jobs = items.enumerated().map { index, item -> LabUploadJob in
+            let name = LabImportPreparer.photoName(now: now, index: items.count > 1 ? index + 1 : nil)
+            return LabUploadJob(name: name) { () async -> LabPreparedFile in
+                do {
+                    guard let data = try await item.loadTransferable(type: Data.self) else {
+                        return .failure("Das Foto ließ sich nicht laden.")
+                    }
+                    return await Task.detached(priority: .userInitiated) {
+                        LabImportPreparer.prepareImageData(data)
+                    }.value
+                } catch {
+                    return .failure("Das Foto ließ sich nicht laden: \(error.localizedDescription)")
                 }
-                let prepared = await Task.detached(priority: .userInitiated) {
-                    LabImportPreparer.prepareImageData(data)
-                }.value
-                await finish(prepared, name: name)
-            } catch {
-                await finish(.failure("Das Foto ließ sich nicht laden: \(error.localizedDescription)"), name: name)
             }
         }
+        LabStore.shared.enqueue(jobs)
     }
 
     private func importImage(_ image: UIImage) {
-        let name = LabImportPreparer.photoName()
-        LabStore.shared.beginPreparing(name: name)
-        Task {
-            let prepared = await Task.detached(priority: .userInitiated) {
+        let job = LabUploadJob(name: LabImportPreparer.photoName()) {
+            await Task.detached(priority: .userInitiated) {
                 LabImportPreparer.prepareImage(image)
             }.value
-            await finish(prepared, name: name)
         }
-    }
-
-    private func finish(_ prepared: LabPreparedFile, name: String) async {
-        switch prepared {
-        case .ready(let data, let contentType):
-            await LabStore.shared.upload(data: data, contentType: contentType, name: name)
-        case .failure(let message):
-            LabStore.shared.reportPreparationError(name: name, message: message)
-        }
+        LabStore.shared.enqueue([job])
     }
 }
 
@@ -242,9 +237,13 @@ enum LabImportPreparer {
         return .ready(jpeg, "image/jpeg")
     }
 
-    /// "Foto 28.09. 10:14.jpg".
-    static func photoName(now: Date = Date()) -> String {
-        "Foto \(BIOSFormat.shortDate(now)) \(BIOSFormat.time(now)).jpg"
+    /// At most this many files per import (file picker, photo picker, share sheet).
+    static let maxFiles = 10
+
+    /// "Foto 28.09. 10:14.jpg", with several photos "Foto 28.09. 10:14 (2).jpg".
+    static func photoName(now: Date = Date(), index: Int? = nil) -> String {
+        let suffix = index.map { " (\($0))" } ?? ""
+        return "Foto \(BIOSFormat.shortDate(now)) \(BIOSFormat.time(now))\(suffix).jpg"
     }
 }
 
@@ -341,97 +340,3 @@ struct LabCameraPicker: UIViewControllerRepresentable {
     }
 }
 
-/// Upload state on top of the Labor tab: progress, done (or duplicate), error.
-struct LabUploadCard: View {
-    let phase: LabUploadPhase
-    let open: (String?) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: symbol)
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(tint)
-                    .frame(width: 34, height: 34)
-                    .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(BIOSTheme.text1)
-                    Text(phase.name)
-                        .font(.caption)
-                        .foregroundStyle(BIOSTheme.text2)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                Spacer(minLength: 6)
-                if !phase.isRunning {
-                    Button {
-                        LabStore.shared.clearUpload()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(BIOSTheme.text2)
-                            .frame(width: 30, height: 30)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Hinweis schließen")
-                }
-            }
-            switch phase {
-            case .preparing:
-                ProgressView()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            case .uploading(_, let progress):
-                ProgressView(value: progress)
-                    .tint(BIOSTheme.accent)
-                    .accessibilityValue("\(Int((progress * 100).rounded())) Prozent")
-            case .done(_, let duplicate, let documentID, _):
-                Text(duplicate
-                     ? "Diese Datei ist schon in BIOS. Es wurde nichts doppelt angelegt."
-                     : "Der Server erkennt die Werte jetzt, meist in ein bis zwei Minuten. Danach prüfst du sie unter Befunde.")
-                    .font(.footnote)
-                    .foregroundStyle(BIOSTheme.text2)
-                    .fixedSize(horizontal: false, vertical: true)
-                Button(documentID == nil ? "Zu den Befunden" : "Dokument ansehen") {
-                    LabStore.shared.clearUpload()
-                    open(documentID)
-                }
-                .font(.footnote.weight(.semibold))
-            case .failed(_, let message):
-                Text(message)
-                    .font(.footnote)
-                    .foregroundStyle(BIOSTheme.text1)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .biosCard(padding: 14)
-        .accessibilityElement(children: .contain)
-    }
-
-    private var title: String {
-        switch phase {
-        case .preparing: return "Wird vorbereitet"
-        case .uploading(_, let progress): return "Wird gesendet, \(Int((progress * 100).rounded())) %"
-        case .done(_, let duplicate, _, _): return duplicate ? "Schon vorhanden" : "Hochgeladen"
-        case .failed: return "Nicht gesendet"
-        }
-    }
-
-    private var symbol: String {
-        switch phase {
-        case .preparing, .uploading: return "arrow.up.circle"
-        case .done(_, let duplicate, _, _): return duplicate ? "doc.on.doc" : "checkmark.circle"
-        case .failed: return "exclamationmark.circle"
-        }
-    }
-
-    private var tint: Color {
-        switch phase {
-        case .preparing, .uploading: return BIOSTheme.accent
-        case .done: return BIOSTheme.good
-        case .failed: return BIOSTheme.mid
-        }
-    }
-}

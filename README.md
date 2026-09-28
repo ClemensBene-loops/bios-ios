@@ -303,6 +303,15 @@ Labor" link in its sheet.
   evaluable), neutral body map link (switches to Körper, systems layer, opens the
   region sheet; `Router.showBodyMapRegion`), table of measurements with the source
   document (tap opens it), reference ranges when labs changed.
+- **Fingerstick** (`bg_fingerstick`, `kind: "messgeraet"`, Stoffwechsel, after the
+  lab markers): every fingerstick entered as a Dexcom calibration. The row shows
+  `source_label` ("aus Dexcom-Kalibrierung") instead of a reference bar, the latest
+  value with its time (`measured_at`) and a sparkline; it never counts in the
+  summary chips. Detail (`LabFingerstickViews.swift`): value with time and origin,
+  chart over date and time of day (tap or drag shows one reading), list with
+  `origin_label`, and the `links` entry `cgm_vergleich`: "Wie weit der Sensor vor
+  dem Fingerstich vom Finger-Wert entfernt war", finger vs sensor chart, table with
+  difference in mg/dL and %, MARD-like mean and bias from 5 pairs (else `reason`).
 - **Befunde** (`GET /v1/labs/documents`): review banner "N Werte erkannt, bitte
   prüfen" (one document opens directly, several open the list), waiting and error
   lines, filter chips by kind, timeline grouped by month, expandable cards (values
@@ -310,6 +319,11 @@ Labor" link in its sheet.
   (with `status_reason`), "zu prüfen", "Fehler" (reason, "Erneut versuchen" =
   `PATCH {"retry": true}`, "Verwerfen"), "bestätigt". The list polls every 15 s
   while a document waits (at most 10 min, only while the tab is visible).
+  `possible_duplicate_of` shows a calm hint "möglicherweise doppelt (wie Befund
+  vom ...)" with a button to the other document; a document without
+  `collected_on` (zu prüfen or bestätigt) shows a yellow "Abnahmedatum fehlt, bitte
+  eintragen" that opens the review screen (a confirmed document saves the date with
+  `PATCH {"document": {"collected_on": ...}}`).
 - **Review screen** (`GET/PATCH/DELETE /v1/labs/documents/{id}`): steps
   Hochgeladen, Erkannt, Bestätigt; preview of the original (`.../file`, PDFKit or
   image, full screen, memory only); editable kind (catalog kinds), date, title,
@@ -324,9 +338,12 @@ Labor" link in its sheet.
   screen with "Änderungen speichern". 409/422 texts from the server are shown calmly.
 - **Import in the app**: one wide button "Befund importieren" under the segment line
   (same in Werte and Befunde; an upload started in Werte switches to Befunde, where
-  the progress card and the new document show) > "PDF oder Bild aus Dateien", "Foto auswählen"
-  (PhotosPicker, no permission), "Foto aufnehmen" (camera,
-  `NSCameraUsageDescription`). Photos and image files become JPEG (long side at
+  the progress card and the new document show) > "PDFs oder Bilder aus Dateien"
+  (multiple selection), "Fotos auswählen" (PhotosPicker, multiple, no permission),
+  "Foto aufnehmen" (camera, `NSCameraUsageDescription`). Up to 10 files per import
+  run one after another (`LabStore.enqueue`, each file read only when its turn
+  comes); the card shows "Wird gesendet, 3 von 5" and a row per file (angekommen,
+  schon vorhanden, or the calm error). Photos and image files become JPEG (long side at
   most 3000 px), PDFs stay PDF; > 15 MB is refused before sending. Upload:
   `POST /v1/labs/documents` with the raw body and its content type
   (`SharedUpload/LabUpload.swift`, own URLSession with long timeouts, progress).
@@ -346,11 +363,13 @@ Labor" link in its sheet.
 
 ### Share extension "BIOS" (`BIOSShare`, `at.bene.bios.share`)
 
-"Teilen" > BIOS from Mail, Files, Photos or a browser sends exactly one PDF or
-image straight to `POST /v1/labs/documents` (activation rule: one attachment
-conforming to `com.adobe.pdf` or `public.image`). Minimal UI: "An BIOS senden",
-file name, progress, "Gesendet" (closes by itself), calm errors with "Erneut
-senden". Images become JPEG first (`SharedUpload/LabUploadImage.swift`). The
+"Teilen" > BIOS from Mail, Files, Photos or a browser sends 1 to 10 PDFs or
+images straight to `POST /v1/labs/documents`, one after another (activation rule:
+1 to 10 attachments conforming to `com.adobe.pdf` or `public.image`; more are left
+out with a note). Minimal UI: "An BIOS senden", file name or file list, progress
+("3 von 5"), "Gesendet" (closes by itself when all arrived), per-file duplicate
+and error texts, "Erneut senden" retries only the failed files. Each file is read
+only when its turn comes (extension memory). Images become JPEG first (`SharedUpload/LabUploadImage.swift`). The
 extension reads `BIOSAPIBaseURL`/`BIOSAPISecret` from its own `BIOSShare/Info.plist`
 (workflow 4 injects them like for `BIOSWidgets`; empty falls back to the app's
 Info.plist via `AppConfig`). No App Group: the extension cannot read the app's

@@ -307,6 +307,30 @@ struct LabDocumentCard: View {
             .accessibilityHint(hint)
             .accessibilityAddTraits(.isButton)
 
+            if needsDate {
+                LabDocumentHint(
+                    symbol: "calendar.badge.exclamationmark",
+                    text: "Abnahmedatum fehlt, bitte eintragen",
+                    action: "Eintragen",
+                    style: .attention,
+                    hint: "Öffnet den Befund, dort das Datum eintragen und speichern"
+                ) {
+                    router.laborPath.append(.document(document.id))
+                }
+            }
+
+            if let duplicateID = document.possibleDuplicateOf {
+                LabDocumentHint(
+                    symbol: "doc.on.doc",
+                    text: duplicateText(duplicateID),
+                    action: "Ansehen",
+                    style: .calm,
+                    hint: "Öffnet den anderen Befund. Es wird nichts zusammengeführt."
+                ) {
+                    router.laborPath.append(.document(duplicateID))
+                }
+            }
+
             switch document.status {
             case .waiting:
                 Text(document.statusReason ?? "Wartet auf die Auswertung. Meist in ein bis zwei Minuten.")
@@ -334,6 +358,25 @@ struct LabDocumentCard: View {
 
     private var expandable: Bool {
         document.status == .confirmed
+    }
+
+    /// Without a collection date the values fall back to the upload day.
+    private var needsDate: Bool {
+        document.collectedOn == nil && (document.status == .confirmed || document.status == .review)
+    }
+
+    /// "möglicherweise doppelt (wie Befund vom 15.09.2026)".
+    private func duplicateText(_ id: String) -> String {
+        guard let other = store.listEntry(id) else {
+            return "möglicherweise doppelt (wie ein früherer Befund)"
+        }
+        if let day = BIOSDate.day(other.collectedOn) {
+            return "möglicherweise doppelt (wie Befund vom \(LabFormat.fullDate(day)))"
+        }
+        if let uploaded = other.uploadedAt {
+            return "möglicherweise doppelt (wie Befund, hochgeladen \(LabFormat.fullDate(uploaded)))"
+        }
+        return "möglicherweise doppelt (wie \(other.displayTitle))"
     }
 
     private var hint: String {
@@ -471,6 +514,60 @@ struct LabDocumentCard: View {
         busy = true
         actionError = await store.delete(document.id)
         busy = false
+    }
+}
+
+/// Small hint row inside a document card with one action: calm grey (possible
+/// duplicate) or yellow (collection date missing).
+struct LabDocumentHint: View {
+    enum Style {
+        case calm
+        case attention
+    }
+
+    let symbol: String
+    let text: String
+    let action: String
+    let style: Style
+    let hint: String
+    let perform: () -> Void
+
+    var body: some View {
+        Button(action: perform) {
+            HStack(spacing: 10) {
+                Image(systemName: symbol)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(style == .attention ? BIOSTheme.midText : BIOSTheme.text2)
+                    .accessibilityHidden(true)
+                Text(text)
+                    .font(.footnote)
+                    .foregroundStyle(style == .attention ? BIOSTheme.midText : BIOSTheme.text2)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 6)
+                Text(action)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(BIOSTheme.accent)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(background, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(style == .attention ? BIOSTheme.mid.opacity(0.45) : Color.clear, lineWidth: 1)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(text). \(action)")
+        .accessibilityHint(hint)
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private var background: Color {
+        style == .attention ? BIOSTheme.mid.opacity(0.10) : BIOSTheme.card2
     }
 }
 

@@ -226,6 +226,17 @@ struct LabDocumentReviewView: View {
             if hasDate {
                 DatePicker("Datum", selection: $date, in: ...Date(), displayedComponents: .date)
                     .foregroundStyle(BIOSTheme.text2)
+            } else if document.status == .review || document.status == .confirmed {
+                Label(document.status == .confirmed
+                      ? "Abnahmedatum fehlt: Schalter an, Datum wählen, dann \"Änderungen speichern\"."
+                      : "Abnahmedatum fehlt: Schalter an und Datum wählen, sonst zählt der Upload-Tag.",
+                      systemImage: "calendar.badge.exclamationmark")
+                    .font(.footnote)
+                    .foregroundStyle(BIOSTheme.midText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(BIOSTheme.mid.opacity(0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
             Divider().overlay(BIOSTheme.separator)
             LabTextFieldRow(label: "Titel", placeholder: "z. B. Laborbefund", text: $title)

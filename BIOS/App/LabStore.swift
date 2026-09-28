@@ -1,8 +1,10 @@
 import Foundation
 import os
 
-/// Phase of an upload started in the app (shown as a card on top of the Labor tab).
+/// Phase of one upload started in the app (a row of the upload card on top of the Labor tab).
 enum LabUploadPhase: Equatable {
+    /// Waits for the files before it (uploads run one after another).
+    case queued(name: String)
     case preparing(name: String)
     case uploading(name: String, progress: Double)
     case done(name: String, duplicate: Bool, documentID: String?, status: String?)
@@ -10,17 +12,36 @@ enum LabUploadPhase: Equatable {
 
     var name: String {
         switch self {
-        case .preparing(let name), .uploading(let name, _), .done(let name, _, _, _), .failed(let name, _):
+        case .queued(let name), .preparing(let name), .uploading(let name, _), .done(let name, _, _, _),
+             .failed(let name, _):
             return name
         }
     }
 
+    /// Not finished yet (queued, preparing or sending).
     var isRunning: Bool {
         switch self {
-        case .preparing, .uploading: return true
+        case .queued, .preparing, .uploading: return true
         default: return false
         }
     }
+
+    var isFinished: Bool { !isRunning }
+}
+
+/// One file of an import (the app's multi-select): its row in the upload card.
+struct LabUploadItem: Identifiable, Equatable {
+    let id: Int
+    var phase: LabUploadPhase
+
+    var name: String { phase.name }
+}
+
+/// A file to upload: the name for the list and how to get its data. The data is
+/// read only when its turn comes, so ten photos never sit in memory at once.
+struct LabUploadJob {
+    let name: String
+    let prepare: @MainActor () async -> LabPreparedFile
 }
 
 /// Everything of the Labor tab: overview (`GET /v1/labs`), documents
@@ -46,7 +67,8 @@ final class LabStore: ObservableObject {
     @Published private(set) var isOffline = false
     /// The server answered 404 (older server without the Labor endpoints).
     @Published private(set) var isUnavailable = false
-    @Published private(set) var uploadPhase: LabUploadPhase?
+    /// Files of the current (or last) import, in order; empty = no upload card.
+    @Published private(set) var uploads: [LabUploadItem] = []
     /// Marker ids whose detail failed to load (with the message).
     @Published private(set) var markerErrors: [String: String] = [:]
     @Published private(set) var documentErrors: [String: String] = [:]
@@ -280,52 +302,108 @@ final class LabStore: ObservableObject {
 
     // MARK: - Upload
 
-    /// Uploads a prepared file (PDF, JPEG, PNG) and follows its extraction.
-    /// Called after `beginPreparing`, so only a running transfer blocks it: the
-    /// former `isRunning` guard also matched `.preparing` and returned at once,
-    /// which left every in-app import stuck on "Wird vorbereitet" without sending.
-    func upload(data: Data, contentType: String, name: String) async {
-        if case .uploading = uploadPhase { return }
-        uploadPhase = .uploading(name: name, progress: 0)
-        do {
-            let result = try await LabUpload.upload(data: data, contentType: contentType) { [weak self] fraction in
-                Task { @MainActor in
-                    self?.setProgress(fraction, name: name)
-                }
+    private var jobs: [Int: LabUploadJob] = [:]
+    private var nextUploadID = 0
+    private var uploadRunner: Task<Void, Never>?
+
+    /// A file of the import is still queued, being prepared or sent.
+    var isUploading: Bool {
+        uploads.contains { $0.phase.isRunning }
+    }
+
+    /// Adds files to the import queue; they are prepared and sent one after the
+    /// other. A new import after a finished one starts a fresh list.
+    func enqueue(_ newJobs: [LabUploadJob]) {
+        guard !newJobs.isEmpty else { return }
+        if !isUploading {
+            uploads = []
+        }
+        for job in newJobs {
+            nextUploadID += 1
+            jobs[nextUploadID] = job
+            uploads.append(LabUploadItem(id: nextUploadID, phase: .queued(name: job.name)))
+        }
+        startUploadRunner()
+    }
+
+    /// A file that could not even be opened (file importer error): a failed row.
+    func reportPreparationError(name: String, message: String) {
+        if !isUploading {
+            uploads = []
+        }
+        nextUploadID += 1
+        uploads.append(LabUploadItem(id: nextUploadID, phase: .failed(name: name, message: message)))
+    }
+
+    /// Hides the upload card (only when nothing runs any more).
+    func clearUpload() {
+        if isUploading { return }
+        uploads = []
+    }
+
+    private func startUploadRunner() {
+        guard uploadRunner == nil else { return }
+        uploadRunner = Task { @MainActor [weak self] in
+            while let self, let next = self.uploads.first(where: {
+                if case .queued = $0.phase { return true }
+                return false
+            }) {
+                await self.process(next.id)
             }
-            uploadPhase = .done(name: name, duplicate: result.duplicate, documentID: result.documentID,
-                                status: result.documentStatus)
-            Self.log.info("Lab upload done (duplicate: \(result.duplicate))")
-            await refresh(force: true)
-            startPolling()
-        } catch {
-            if error is CancellationError {
-                uploadPhase = nil
-                return
-            }
-            let text = (error as? LabUploadError)?.errorDescription ?? error.localizedDescription
-            uploadPhase = .failed(name: name, message: text)
-            Self.log.error("Lab upload failed: \(error.localizedDescription, privacy: .public)")
+            guard let self else { return }
+            self.uploadRunner = nil
+            await self.refresh(force: true)
+            self.startPolling()
         }
     }
 
-    /// A file could not be read or converted before the upload.
-    func reportPreparationError(name: String, message: String) {
-        uploadPhase = .failed(name: name, message: message)
+    /// Prepares and sends one file; a failure only marks its row.
+    private func process(_ id: Int) async {
+        guard let job = jobs.removeValue(forKey: id) else {
+            setPhase(id, .failed(name: "Datei", message: "Nicht mehr verfügbar."))
+            return
+        }
+        let name = job.name
+        setPhase(id, .preparing(name: name))
+        let prepared = await job.prepare()
+        switch prepared {
+        case .failure(let message):
+            setPhase(id, .failed(name: name, message: message))
+        case .ready(let data, let contentType):
+            setPhase(id, .uploading(name: name, progress: 0))
+            do {
+                let result = try await LabUpload.upload(data: data, contentType: contentType) { [weak self] fraction in
+                    Task { @MainActor in
+                        self?.setProgress(id, fraction)
+                    }
+                }
+                setPhase(id, .done(name: name, duplicate: result.duplicate, documentID: result.documentID,
+                                   status: result.documentStatus))
+                Self.log.info("Lab upload done (duplicate: \(result.duplicate))")
+                // The new document shows in Befunde while the next file is sent.
+                await refresh(force: true)
+            } catch {
+                let text: String
+                if error is CancellationError {
+                    text = "Abgebrochen."
+                } else {
+                    text = (error as? LabUploadError)?.errorDescription ?? error.localizedDescription
+                }
+                setPhase(id, .failed(name: name, message: text))
+                Self.log.error("Lab upload failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
     }
 
-    func beginPreparing(name: String) {
-        uploadPhase = .preparing(name: name)
+    private func setPhase(_ id: Int, _ phase: LabUploadPhase) {
+        guard let index = uploads.firstIndex(where: { $0.id == id }) else { return }
+        uploads[index].phase = phase
     }
 
-    func clearUpload() {
-        if uploadPhase?.isRunning == true { return }
-        uploadPhase = nil
-    }
-
-    private func setProgress(_ fraction: Double, name: String) {
-        guard case .uploading = uploadPhase else { return }
-        uploadPhase = .uploading(name: name, progress: fraction)
+    private func setProgress(_ id: Int, _ fraction: Double) {
+        guard let index = uploads.firstIndex(where: { $0.id == id }),
+              case .uploading(let name, _) = uploads[index].phase else { return }
+        uploads[index].phase = .uploading(name: name, progress: fraction)
     }
 
     // MARK: - Polling while a document waits for the extraction
