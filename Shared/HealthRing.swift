@@ -9,7 +9,8 @@ import SwiftUI
 
 /// The six pillars in the server ring order (`ORDER` in the BIOS repo,
 /// analysis/health_score.py): clockwise from the top Schlaf, Erholung,
-/// Stoffwechsel, Kreislauf, Abwehr, Routine. Design A colors.
+/// Stoffwechsel, Kreislauf, Abwehr, Routine. Design A colors. Labor (formula
+/// 3) is a background pillar without a ring segment (`background`).
 enum HealthPillarPalette {
     struct Pillar: Hashable, Sendable {
         let key: String
@@ -31,9 +32,21 @@ enum HealthPillarPalette {
     /// Canonical keys in ring order.
     static let order: [String] = pillars.map(\.key)
 
+    /// Background pillars: shown in the pillar grid and the score detail, never
+    /// as a ring segment (ring and Live Activity stay six). Since formula 3
+    /// (28.09.2026): Labor.
+    static let background: [Pillar] = [
+        Pillar(key: "labor", label: "Labor", hex: 0xE48FB0),
+    ]
+
+    /// Grid and detail order: the six ring pillars, then the background ones.
+    static let displayOrder: [String] = order + background.map(\.key)
+
     /// Canonical key for a server key or German label ("Schlaf" -> "sleep").
     /// Unknown keys come back unchanged.
     static func canonical(_ key: String, label: String? = nil) -> String {
+        let lower = key.lowercased()
+        if lower == "labor" || lower == "lab" || lower == "labs" { return "labor" }
         let text = (key + " " + (label ?? "")).lowercased()
         if text.contains("sleep") || text.contains("schlaf") { return "sleep" }
         if text.contains("recover") || text.contains("erholung") { return "recovery" }
@@ -41,7 +54,14 @@ enum HealthPillarPalette {
         if text.contains("circ") || text.contains("kreislauf") || text.contains("cardio") { return "circulation" }
         if text.contains("immun") || text.contains("abwehr") || text.contains("infect") { return "immune" }
         if text.contains("routine") || text.contains("habit") { return "routine" }
+        if text.contains("labor") { return "labor" }
         return key
+    }
+
+    /// Whether a pillar is a background pillar (no ring segment).
+    static func isBackground(_ key: String, label: String? = nil) -> Bool {
+        let canonicalKey = canonical(key, label: label)
+        return background.contains { $0.key == canonicalKey }
     }
 
     /// Ring slot 0...5 of a pillar, nil for an unknown key.
@@ -53,14 +73,21 @@ enum HealthPillarPalette {
         index(of: key, label: label).map { pillars[$0] }
     }
 
-    /// Design color of a pillar, nil for an unknown key.
+    /// Ring or background pillar (Labor), nil for an unknown key.
+    static func anyPillar(_ key: String, label: String? = nil) -> Pillar? {
+        if let ring = pillar(key, label: label) { return ring }
+        let canonicalKey = canonical(key, label: label)
+        return background.first { $0.key == canonicalKey }
+    }
+
+    /// Design color of a pillar (ring or background), nil for an unknown key.
     static func color(_ key: String, label: String? = nil) -> Color? {
-        pillar(key, label: label)?.color
+        anyPillar(key, label: label)?.color
     }
 
     /// German label of a pillar, the key itself when unknown.
     static func defaultLabel(_ key: String) -> String {
-        pillar(key)?.label ?? key
+        anyPillar(key)?.label ?? key
     }
 }
 

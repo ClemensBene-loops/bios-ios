@@ -28,8 +28,10 @@ and later: charts, infection score, blood pressure, quick log, Gesundheits-Score
 Live Activity, Körperkarte). v3 lives on branch `v3`, cut from `v2-dashboard`:
 infection check "klingt ab", Bewegungs-Stupser (notification buttons, settings in
 Mehr incl. "Sicherheitsabstand" once the server offers it), Labor tab (Werte |
-Befunde, review step with marker assignment and unit choice) and the share
-extension `BIOSShare`. `main` still holds v1 (build `1.0 (2)`, PR #1) until
+Befunde, review step with marker assignment and unit choice), the share
+extension `BIOSShare`, Gesundheits-Score formula 3 (Labor as a background pillar
+without a ring segment, pillar parts in the detail, "Krafttraining pro Woche" in
+Mehr) and "Reiseziele" in Umwelt. `main` still holds v1 (build `1.0 (2)`, PR #1) until
 `v2-dashboard` and then `v3` are merged. The share extension needs workflows 2 and
 3 once before the next build (see "Share extension" below).
 
@@ -60,7 +62,11 @@ labels, no third-party dependencies (Swift Charts and PDFKit are Apple's).
   detail, charts with the personal baseline band, 7/28 day switch shared with the
   detail screens.
 - **Umwelt**: viruses in wastewater (Wien, Germany) with fine trend arrows, pollen
-  forecast for the next 4 days, allergy block, season hints.
+  forecast for the next 4 days, "Reiseziele" (`environment.trips`: destinations of
+  the next 14 days from the calendar, city and dates only; kind symbol, the
+  server's `line`, a sheet with wastewater per virus of the nearest plant or
+  region incl. distance, note and source, and the pollen of the trip days; when
+  detection is off the server's `reason` calmly), allergy block, season hints.
 - **Labor**: lab values and documents (see "Labor" below), segment "Werte | Befunde"
   with one explaining line each, one "Befund importieren" button for both, or the share sheet.
 - **Mehr**: push status (permission, APNs registration, token upload, last push),
@@ -95,6 +101,15 @@ weight. The app renders only what the server sends: score, level word
 `delta_week` as a pill ("+4 zur Vorwoche"), and per pillar score, trend and a
 German reason (Kreislauf names its parts: resting HR level, training minutes,
 blood pressure). Observation only; the score never hides a warning.
+
+Formula 3 (28.09.2026): a seventh pillar `labor` (label "Labor", `#E48FB0`) is a
+background pillar (`HealthPillarPalette.background`): it shows in the grid and the
+detail, never as a ring segment; ring and Live Activity stay six (`pillars_mini`).
+The detail renders `pillars[].parts` generically (Routine: Krafttraining with
+strength-day segments, Einnahmen; Kreislauf parts) and for Labor the `groups` with
+points and the `flagged` values (tap opens the marker in the Labor tab). Mehr >
+"Gesundheits-Score": stepper "Krafttraining pro Woche" 0 to 7 (0 = off),
+`PATCH /v1/health/settings`; on an error the old value comes back with a calm line.
 
 - **Heute card** (`HealthScoreCard`): ring 138 pt / line 11 pt with number and
   level word, delta pill, freshness line, pillar grid (3 columns); with formula 2
@@ -722,6 +737,7 @@ limit) or 503.
 | `POST /v1/live-activity/token`, `DELETE /v1/live-activity/token/{token}`, `GET /v1/live-activity` | Live Activity push tokens (`start`, `update`) and the current content state (also read by the lock screen widgets) |
 | `GET /v1/labs`, `GET /v1/labs/catalog`, `GET /v1/labs/markers/{id}` | Labor "Werte": `due`, `groups[].markers[]` (`latest`, `previous`, `sparkline`, `target`), `review`, `regions`; catalog kinds; marker `history` (HbA1c with `gmi`), `refs`, `links` |
 | `POST /v1/labs/documents` (raw PDF/JPEG/PNG, up to 15 MB), `GET /v1/labs/documents[/{id}[/file]]`, `PATCH`/`DELETE /v1/labs/documents/{id}` | Labor "Befunde": upload (201 new, 200 duplicate), list, document with `values`, original for the preview, review step (`document`, `values`, `confirm`, `retry`), discard |
+| `GET/PATCH /v1/health/settings` | Gesundheits-Score settings: `strength_goal_per_week` 0 to 7 (Mehr) |
 | `GET /v1/dashboard` block `labs` | Heute card and tab badge: `review_documents`, `waiting`, `errors`, `due` (faellig/bald), `has_values` |
 
 Rules the app relies on:

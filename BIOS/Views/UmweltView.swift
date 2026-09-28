@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Tab "Umwelt": viruses in wastewater (Wien, Deutschland), pollen, allergy
+/// Tab "Umwelt": viruses in wastewater (Wien, Deutschland), pollen, Reiseziele, allergy
 /// block, season hints.
 struct UmweltView: View {
     @EnvironmentObject var dashboardStore: DashboardStore
@@ -36,6 +36,10 @@ struct UmweltView: View {
                         PollenForecastCard(pollen: place)
                     }
                     .buttonStyle(CardButtonStyle())
+                }
+
+                if let trips = dashboard?.environment?.trips {
+                    TripsSection(trips: trips)
                 }
 
                 SectionHeader(title: "Allergie")

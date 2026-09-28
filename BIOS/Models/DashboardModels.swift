@@ -965,9 +965,12 @@ struct EnvironmentModel {
     let pollen: [PollenModel]
     let allergy: AllergyModel?
     let hints: [BIOSAlert]
+    /// `trips` (Reiseziele, additive since 28.09.2026); nil on an older server.
+    let trips: TripsModel?
 
     init(json: JSONValue) {
         season = json.str("season")
+        trips = json.obj("trips").map { TripsModel(json: $0) }
         let sources = json.obj("viruses")?.objectValue ?? [:]
         let keys = sources.keys.sorted { lhs, rhs in
             let left = lhs == "abwasser_wien" ? 0 : 1

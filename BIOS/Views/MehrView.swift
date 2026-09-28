@@ -70,6 +70,8 @@ struct MehrView: View {
 
             NudgeSection()
 
+            HealthSettingsSection()
+
             LockScreenWidgetSection()
 
             LiveActivitySection()

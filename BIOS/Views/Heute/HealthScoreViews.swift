@@ -5,10 +5,11 @@ import SwiftUI
 // pillar list with bars, trends and reasons (detail). Observation only.
 
 /// Ring input in the shared ring order (HealthPillarPalette): score per slot
-/// (nil = pillar missing, dashed grey) and color per slot.
+/// (nil = pillar missing, dashed grey) and color per slot. Six slots only:
+/// background pillars (Labor) never get a segment.
 enum HealthRing {
     static func values(_ health: HealthModel) -> [Double?] {
-        HealthPillar.order.map { key in pillar(health, key)?.score }
+        HealthPillarPalette.order.map { key in pillar(health, key)?.score }
     }
 
     static func colors(_ health: HealthModel) -> [Color] {
@@ -92,7 +93,7 @@ struct HealthScoreCard: View {
                     HealthRingView(health: health, size: 138, lineWidth: 11)
                     VStack(alignment: .leading, spacing: 10) {
                         HealthDeltaPill(health: health)
-                        Text("Sechs Säulen.\nEin Gesamtbild.")
+                        Text(health.cardHeadline)
                             .font(.headline)
                             .fixedSize(horizontal: false, vertical: true)
                         Text(health.freshnessText)
@@ -127,7 +128,10 @@ struct HealthScoreCard: View {
                                 .monospacedDigit()
                                 .padding(.leading, 12)
                         }
-                        .accessibilityElement(children: .combine)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(pillar.isBackground
+                            ? "\(pillar.label) \(BIOSFormat.number(pillar.score)), im Hintergrund, nicht im Ring"
+                            : "\(pillar.label) \(BIOSFormat.number(pillar.score))")
                     }
                 }
             }
@@ -135,7 +139,9 @@ struct HealthScoreCard: View {
             .biosCard()
         }
         .buttonStyle(CardButtonStyle())
-        .accessibilityHint("Öffnet die sechs Säulen")
+        .accessibilityHint(health.hasBackgroundPillar
+            ? "Öffnet die sechs Säulen im Ring, dazu Labor im Hintergrund"
+            : "Öffnet die sechs Säulen")
     }
 }
 
@@ -462,7 +468,9 @@ struct HealthDetailView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 14) {
                 StoreStatusBanner()
-                Text("Deine sechs Säulen")
+                Text(health?.hasBackgroundPillar == true
+                     ? "Sechs Säulen im Ring, dazu Labor im Hintergrund"
+                     : "Deine sechs Säulen")
                     .font(.title3)
                     .foregroundStyle(BIOSTheme.text2)
                     .padding(.horizontal, 4)
@@ -499,12 +507,15 @@ struct HealthDetailView: View {
 
                     VStack(spacing: 0) {
                         ForEach(Array(health.pillars.enumerated()), id: \.element.id) { entry in
-                            PillarRow(pillar: entry.element)
-                                .overlay(alignment: .top) {
-                                    if entry.offset > 0 {
-                                        Rectangle().fill(BIOSTheme.separator).frame(height: 0.5)
-                                    }
+                            VStack(alignment: .leading, spacing: 0) {
+                                PillarRow(pillar: entry.element)
+                                PillarExtras(pillar: entry.element)
+                            }
+                            .overlay(alignment: .top) {
+                                if entry.offset > 0 {
+                                    Rectangle().fill(BIOSTheme.separator).frame(height: 0.5)
                                 }
+                            }
                         }
                     }
                     .biosCard()
@@ -519,7 +530,7 @@ struct HealthDetailView: View {
                 RangePicker(days: $days)
                 MetricChartCard(kind: .healthScore, days: days)
 
-                NoteText(text: "Beobachtung, keine Diagnose. Der Score fasst sechs Säulen gegen deine eigene Baseline zusammen; eine Warnung einzelner Checks bleibt davon unberührt.")
+                NoteText(text: "Beobachtung, keine Diagnose. Der Score fasst sechs Säulen im Ring gegen deine eigene Baseline zusammen, dazu Labor als Hintergrundfaktor (bestätigte Laborwerte der letzten 12 Monate, ohne Ring-Segment). Eine Warnung einzelner Checks bleibt davon unberührt.")
             }
             .padding(.horizontal, 16)
             .padding(.top, 8)

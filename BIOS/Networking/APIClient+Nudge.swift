@@ -33,7 +33,7 @@ extension APIClient {
     }
 
     /// Network errors, 429 and 5xx are retried once after 1 s; any other status is returned.
-    private func nudgeWrite(_ method: String, path: [String], body: JSONValue, attempts: Int) async throws -> NudgeHTTPResult {
+    func nudgeWrite(_ method: String, path: [String], body: JSONValue, attempts: Int) async throws -> NudgeHTTPResult {
         var request = makeRequest(path: path, method: method)
         request.timeoutInterval = 10
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")

@@ -1,7 +1,8 @@
 import SwiftUI
 
-// View models for the dashboard blocks `health` (Gesundheits-Score, six
-// pillars) and `vitals` (last temperature / blood pressure entered in the app).
+// View models for the dashboard blocks `health` (Gesundheits-Score, six ring
+// pillars plus Labor in the background) and `vitals` (last temperature /
+// blood pressure entered in the app).
 // Lenient like the rest: a missing block hides its card.
 
 struct HealthPillar: Identifiable {
@@ -13,8 +14,19 @@ struct HealthPillar: Identifiable {
     let trend: Int?
     let reason: String?
     let color: Color
+    /// Parts of the pillar (`parts`, Kreislauf since 26.09., Routine since
+    /// formula 3), empty when absent.
+    let parts: [HealthPillarPart]
+    /// Labor only (formula 3): score per lab group and the values below 100.
+    let labGroups: [HealthLabGroup]
+    let labFlagged: [HealthLabFlag]
+    let labMarkerCount: Int?
+    let labLastDate: Date?
 
     var id: String { key }
+
+    /// Background pillar (Labor): grid and detail, no ring segment.
+    var isBackground: Bool { HealthPillarPalette.isBackground(key, label: label) }
 
     init?(json: JSONValue) {
         guard let key = json.str("key") ?? json.str("id") else { return nil }
@@ -34,6 +46,11 @@ struct HealthPillar: Identifiable {
         }
         reason = json.str("reason") ?? json.str("text")
         color = HealthPillar.color(key: key, label: label, hex: json.str("color"))
+        parts = json.list("parts").compactMap { HealthPillarPart(json: $0) }
+        labGroups = json.list("groups").compactMap { HealthLabGroup(json: $0) }
+        labFlagged = json.list("flagged").enumerated().compactMap { HealthLabFlag(json: $0.element, index: $0.offset) }
+        labMarkerCount = json.int("n_markers")
+        labLastDate = BIOSDate.day(json.str("last_date"))
     }
 
     var trendSymbol: String? {
@@ -64,8 +81,9 @@ struct HealthPillar: Identifiable {
         return HealthPillarPalette.color(key, label: label) ?? BIOSTheme.text2
     }
 
-    /// Order of the ring and grid: Schlaf, Erholung, Stoffwechsel, Kreislauf, Abwehr, Routine.
-    static var order: [String] { HealthPillarPalette.order }
+    /// Order of the grid and the detail: Schlaf, Erholung, Stoffwechsel,
+    /// Kreislauf, Abwehr, Routine (the ring), then Labor (background).
+    static var order: [String] { HealthPillarPalette.displayOrder }
 
     static func canonical(_ key: String, _ label: String) -> String {
         HealthPillarPalette.canonical(key, label: label)
@@ -83,6 +101,10 @@ struct HealthModel {
     let pillars: [HealthPillar]
     /// Pillars left out (no data), as text.
     let dropped: [String]
+    /// The same without background pillars (Heute card: Labor missing is normal).
+    let droppedRing: [String]
+    /// `settings.strength_goal_per_week` (formula 3), nil when absent.
+    let strengthGoal: Int?
     let headline: String?
     let subline: String?
     let generatedAt: Date?
@@ -103,11 +125,22 @@ struct HealthModel {
             let right = HealthPillar.order.firstIndex(of: HealthPillar.canonical(rhs.key, rhs.label)) ?? 99
             return left < right
         }
-        dropped = json.list("dropped").compactMap { element in
-            element.stringValue ?? element.str("label").map { label in
-                element.str("reason").map { "\(label) (\($0))" } ?? label
-            } ?? element.str("key")
+        // `dropped_info` ([{key, label, reason}]) wins over `dropped` (keys or objects).
+        let info = json.list("dropped_info")
+        let rawDropped = info.isEmpty ? json.list("dropped") : info
+        let items: [(key: String, text: String)] = rawDropped.compactMap { (element: JSONValue) -> (key: String, text: String)? in
+            if let key = element.stringValue {
+                return (key, HealthPillar.defaultLabel(key))
+            }
+            let key = element.str("key") ?? element.str("label") ?? ""
+            guard let label = element.str("label") ?? (key.isEmpty ? nil : HealthPillar.defaultLabel(key)) else {
+                return nil
+            }
+            return (key, element.str("reason").map { "\(label) (\($0))" } ?? label)
         }
+        dropped = items.map(\.text)
+        droppedRing = items.filter { !HealthPillarPalette.isBackground($0.key) }.map(\.text)
+        strengthGoal = json.obj("settings")?.int("strength_goal_per_week")
         headline = json.str("headline")
         subline = json.str("subline") ?? json.str("text")
         generatedAt = BIOSDate.parse(json.str("generated_at"))
@@ -181,8 +214,154 @@ struct HealthModel {
         return "Mit Luft für \(weakest.label)."
     }
 
+    /// Heute card: ring pillars only (a missing Labor pillar is no gap).
     var freshnessText: String {
-        dropped.isEmpty ? "Alle Daten aktuell" : "Ohne: " + dropped.joined(separator: ", ")
+        droppedRing.isEmpty ? "Alle Daten aktuell" : "Ohne: " + droppedRing.joined(separator: ", ")
+    }
+
+    /// A background pillar (Labor) is in the list.
+    var hasBackgroundPillar: Bool { pillars.contains { $0.isBackground } }
+
+    /// Heute card headline.
+    var cardHeadline: String {
+        hasBackgroundPillar ? "Sechs Säulen plus Labor.\nEin Gesamtbild." : "Sechs Säulen.\nEin Gesamtbild."
+    }
+}
+
+/// One part of a pillar (`pillars[].parts`): Kreislauf `ruhepuls_niveau`,
+/// `aktivitaet`, `blutdruck`; Routine `krafttraining`, `einnahmen`. Unknown
+/// parts render generically (label, score, reason).
+struct HealthPillarPart: Identifiable {
+    let key: String
+    let label: String
+    /// nil = part missing (`reason` says why).
+    let score: Double?
+    let weight: Double?
+    /// Share in % after renormalizing.
+    let weightUsed: Double?
+    let reason: String?
+    /// `krafttraining`: strength days in the window and the weekly goal.
+    let sessions: Int?
+    let goal: Int?
+    let windowDays: Int?
+
+    var id: String { key }
+
+    init?(json: JSONValue) {
+        guard let key = json.str("key") ?? json.str("label") else { return nil }
+        self.key = key
+        label = json.str("label") ?? HealthPillarPart.defaultLabel(key)
+        score = json.double("score").map { Swift.max(0, Swift.min(100, $0)) }
+        weight = json.double("weight")
+        weightUsed = json.double("weight_used")
+        reason = json.str("reason")
+        sessions = json.int("sessions")
+        goal = json.int("goal")
+        windowDays = json.int("window_days")
+    }
+
+    static func defaultLabel(_ key: String) -> String {
+        switch key {
+        case "krafttraining": return "Krafttraining"
+        case "einnahmen": return "Einnahmen"
+        case "ruhepuls_niveau": return "Ruhepuls-Niveau"
+        case "aktivitaet": return "Aktivität"
+        case "blutdruck": return "Blutdruck"
+        default: return key
+        }
+    }
+
+    /// "Anteil 40 %"
+    var shareText: String? {
+        (weightUsed ?? weight).map { "Anteil \(BIOSFormat.number($0)) %" }
+    }
+
+    /// Strength progress (sessions of goal) when both are known and the goal is on.
+    var progress: (done: Int, total: Int)? {
+        guard let sessions, let goal, goal > 0 else { return nil }
+        return (Swift.min(sessions, goal), goal)
+    }
+
+    var accessibilityText: String {
+        var parts = [label]
+        parts.append(score.map { "\(BIOSFormat.number($0)) von 100" } ?? "keine Wertung")
+        if let reason { parts.append(reason) }
+        if let shareText { parts.append(shareText) }
+        return parts.joined(separator: ", ")
+    }
+}
+
+/// `labor.groups[]`: score per lab group.
+struct HealthLabGroup: Identifiable {
+    let key: String
+    let label: String
+    let score: Double?
+    let weightUsed: Double?
+    let markerCount: Int?
+
+    var id: String { key }
+
+    init?(json: JSONValue) {
+        guard let key = json.str("key") ?? json.str("id") ?? json.str("label") else { return nil }
+        self.key = key
+        label = json.str("label") ?? key
+        score = json.double("score").map { Swift.max(0, Swift.min(100, $0)) }
+        weightUsed = json.double("weight_used")
+        markerCount = json.int("n_markers")
+    }
+
+    /// "3 Werte"
+    var countText: String? {
+        markerCount.map { $0 == 1 ? "1 Wert" : "\($0) Werte" }
+    }
+}
+
+/// `labor.flagged[]`: a lab value below 100 points (worst first).
+struct HealthLabFlag: Identifiable {
+    let id: String
+    /// Catalog marker id (opens the marker detail in the Labor tab).
+    let marker: String?
+    let name: String
+    let group: String?
+    /// "hoch", "niedrig", "auffällig", "über Ziel", "unter Ziel".
+    let status: String?
+    let date: Date?
+    let value: Double?
+    let valueText: String?
+    let unit: String?
+    let score: Double?
+
+    init?(json: JSONValue, index: Int) {
+        let marker = json.str("marker")
+        guard let name = json.str("name") ?? marker else { return nil }
+        self.marker = marker
+        self.name = name
+        id = (marker ?? name) + "-\(index)"
+        group = json.str("group")
+        status = json.str("status")
+        date = BIOSDate.day(json.str("date"))
+        value = json.double("value")
+        valueText = json.str("value")
+        unit = json.str("unit")
+        score = json.double("score").map { Swift.max(0, Swift.min(100, $0)) }
+    }
+
+    /// "7,4 %" (decimals as the server sent them, max 2).
+    var valueLine: String? {
+        let number: String?
+        if let value {
+            let digits = value == value.rounded() ? 0 : (abs(value * 10 - (value * 10).rounded()) < 0.0001 ? 1 : 2)
+            number = BIOSFormat.number(value, digits: digits)
+        } else {
+            number = valueText
+        }
+        guard let number else { return nil }
+        return unit.map { "\(number) \($0)" } ?? number
+    }
+
+    /// "hoch · 01.09."
+    var metaLine: String {
+        [status, date.map { BIOSFormat.shortDate($0) }].compactMap { $0 }.joined(separator: " · ")
     }
 }
 
