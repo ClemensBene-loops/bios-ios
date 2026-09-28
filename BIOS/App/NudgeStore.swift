@@ -112,6 +112,13 @@ final class NudgeStore: ObservableObject {
         await save(["max_per_day": .number(Double(value))], optimistic: next)
     }
 
+    /// Safety margin (`guard`: "streng", "mittel", "locker").
+    func setSafety(_ value: String) async {
+        var next = settings
+        next.safety = value
+        await save(["guard": .string(value)], optimistic: next)
+    }
+
     private func save(_ patch: [String: JSONValue], optimistic: NudgeSettings) async {
         guard optimistic != settings, !isSaving else { return }
         guard let client = APIClient.fromConfig() else {

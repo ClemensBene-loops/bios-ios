@@ -23,12 +23,15 @@ repo (`api/server.py`, `api/dashboard.py`, `api/series.py`, `api/intake.py`,
 | Version | `MARKETING_VERSION` 2.0 (`project.yml`), build number = latest TestFlight build + 1 |
 | GitHub | `ClemensBene-loops/bios-ios` (public, organization on the free plan) |
 
-Status (2026-09-26): v2 lives on branch `v2-dashboard` (TestFlight builds `2.0 (3)`
+Status (2026-09-28): v2 lives on branch `v2-dashboard` (TestFlight builds `2.0 (3)`
 and later: charts, infection score, blood pressure, quick log, Gesundheits-Score,
-Live Activity, Körperkarte). `main` still holds v1 (build `1.0 (2)`, PR #1) until
-`v2-dashboard` is merged. v3 work (Bewegungs-Stupser, Labor tab with the share
-extension) lives on branch `v3`, cut from `v2-dashboard`. The share extension needs
-workflows 2 and 3 once before the next build (see "Share extension" below).
+Live Activity, Körperkarte). v3 lives on branch `v3`, cut from `v2-dashboard`:
+infection check "klingt ab", Bewegungs-Stupser (notification buttons, settings in
+Mehr incl. "Sicherheitsabstand" once the server offers it), Labor tab (Werte |
+Befunde, review step with marker assignment and unit choice) and the share
+extension `BIOSShare`. `main` still holds v1 (build `1.0 (2)`, PR #1) until
+`v2-dashboard` and then `v3` are merged. The share extension needs workflows 2 and
+3 once before the next build (see "Share extension" below).
 
 This repo is **public**: no secrets, no server URL, no IPA and no personal health
 data are ever committed or uploaded as workflow artifacts. Sample data in the code
@@ -246,7 +249,10 @@ category, answers the buttons and edits the settings. **Default off.**
 - **Mehr > Bewegungs-Stupser** (`BIOS/Views/NudgeSection.swift`): switch (one
   sentence what it does, quiet, at most N per day), tone Freundlich / Frech with an
   example text, time window (half-hour steps within `options.hours_bounds`), maximum
-  per day (`options.max_per_day_range`), "Heute" (sent, remaining, cooldown or
+  per day (`options.max_per_day_range`), "Sicherheitsabstand" (setting `guard`,
+  streng/mittel/locker with the server's description; shown only when `options`
+  lists the levels, read tolerantly from `guards`/`guard`/`guard_levels`, PATCH
+  `{"guard": ...}`), "Heute" (sent, remaining, cooldown or
   "Heute nicht"), the last check's reason while on, then "Stupser und Wirkung": the
   weekly text and the last nudges with glucose, Δ30/Δ60 mg/dL and the answer (3
   shown, "Alle 10 zeigen"). Every change is a partial `PATCH /v1/nudge/settings`;
@@ -297,7 +303,11 @@ Labor" link in its sheet.
   Hochgeladen, Erkannt, Bestätigt; preview of the original (`.../file`, PDFKit or
   image, full screen, memory only); editable kind (catalog kinds), date, title,
   source; values with editable value (decimal comma) and unit, yellow highlight
-  with the review reasons, page and snippet; discard per value; "N Werte
+  with the review reasons, page and snippet; a unit menu next to the unit field
+  with the marker's `units_accepted` (canonical unit first); an unmapped value
+  (`nicht_zugeordnet`, `marker_id` null or `x_...`) gets "Marker zuordnen": a
+  searchable sheet over `GET /v1/labs/catalog` (name, id, group), grouped like the
+  tab, which sends `marker_id` with the save; discard per value; "N Werte
   übernehmen" = one PATCH with the changed fields, discards and `confirm: true`;
   "Verwerfen" = DELETE after a confirmation. A confirmed document opens the same
   screen with "Änderungen speichern". 409/422 texts from the server are shown calmly.

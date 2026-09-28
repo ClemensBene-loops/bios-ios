@@ -584,6 +584,11 @@ struct LabValue: Identifiable, Equatable {
 
     var isDiscarded: Bool { review == "verworfen" }
 
+    /// Not assigned to a catalog marker (review reason, no id or a custom `x_` id).
+    var isUnmapped: Bool {
+        reviewReasons.contains("nicht_zugeordnet") || markerID == nil || markerID?.hasPrefix("x_") == true
+    }
+
     /// "53 mmol/mol" as printed in the document.
     var printedText: String {
         let number = LabFormat.value(value, decimals: nil, comparator: comparator, text: valueText)
@@ -697,9 +702,68 @@ struct LabDocumentsResponse: Equatable {
     }
 }
 
-/// `GET /v1/labs/catalog` (only the kinds are used: labels for the kind picker).
+/// A marker of the catalog (for "Marker zuordnen" in the review step).
+struct LabCatalogMarker: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let group: String?
+    let groupLabel: String?
+    /// Canonical unit.
+    let unit: String?
+    let decimals: Int
+    let kind: String?
+    /// Units the server can convert (canonical one included).
+    let unitsAccepted: [String]
+
+    init?(json: JSONValue) {
+        guard let id = json.str("id") else { return nil }
+        self.id = id
+        name = json.str("name") ?? id
+        group = json.str("group")
+        groupLabel = json.str("group_label")
+        unit = json.str("unit")
+        decimals = max(0, min(4, json.int("decimals") ?? 1))
+        kind = json.str("kind")
+        unitsAccepted = json.strings("units_accepted")
+    }
+
+    /// Unit choices: canonical unit first, then the other accepted ones.
+    var unitChoices: [String] {
+        let candidates = (unit.map { [$0] } ?? []) + unitsAccepted
+        var result: [String] = []
+        for candidate in candidates where !candidate.isEmpty && !result.contains(candidate) {
+            result.append(candidate)
+        }
+        return result
+    }
+
+    /// Search over name, id and group ("hba", "Blutfette", "ldl").
+    func matches(_ query: String) -> Bool {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return true }
+        let options: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
+        return [name, id, groupLabel ?? "", group ?? ""].contains { $0.range(of: needle, options: options) != nil }
+    }
+}
+
+/// One group of the marker picker.
+struct LabCatalogSection: Identifiable, Equatable {
+    let id: String
+    let label: String
+    let markers: [LabCatalogMarker]
+}
+
+/// `GET /v1/labs/catalog`: kinds for the kind picker, groups and markers for
+/// assigning an unmapped value.
 struct LabCatalog: Equatable {
+    struct GroupInfo: Identifiable, Equatable {
+        let id: String
+        let label: String
+    }
+
     let kinds: [LabKindOption]
+    let groups: [GroupInfo]
+    let markers: [LabCatalogMarker]
 
     init(json: JSONValue?) {
         let parsed: [LabKindOption] = (json?.list("kinds") ?? []).compactMap { kind in
@@ -707,6 +771,33 @@ struct LabCatalog: Equatable {
             return LabKindOption(id: id, label: kind.str("label") ?? LabKind.label(id) ?? id)
         }
         kinds = parsed.isEmpty ? LabKind.all : parsed
+        groups = (json?.list("groups") ?? []).compactMap { group -> GroupInfo? in
+            guard let id = group.str("id") else { return nil }
+            return GroupInfo(id: id, label: group.str("label") ?? id)
+        }
+        markers = (json?.list("markers") ?? []).compactMap { LabCatalogMarker(json: $0) }
+    }
+
+    func marker(_ id: String?) -> LabCatalogMarker? {
+        guard let id else { return nil }
+        return markers.first { $0.id == id }
+    }
+
+    /// Markers matching `query`, grouped in catalog group order (groups the
+    /// catalog does not list come last, in order of appearance).
+    func sections(matching query: String) -> [LabCatalogSection] {
+        let hits = markers.filter { $0.matches(query) }
+        var order = groups.map(\.id)
+        for marker in hits {
+            let id = marker.group ?? "sonstiges"
+            if !order.contains(id) { order.append(id) }
+        }
+        return order.compactMap { groupID -> LabCatalogSection? in
+            let items = hits.filter { ($0.group ?? "sonstiges") == groupID }
+            guard !items.isEmpty else { return nil }
+            let label = groups.first { $0.id == groupID }?.label ?? items.first?.groupLabel ?? groupID
+            return LabCatalogSection(id: groupID, label: label, markers: items)
+        }
     }
 }
 

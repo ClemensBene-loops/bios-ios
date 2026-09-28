@@ -13,15 +13,19 @@ struct NudgeSettings: Equatable {
     var start: String
     var end: String
     var maxPerDay: Int
+    /// Safety margin `guard` ("streng", "mittel", "locker"); nil while the server
+    /// does not send it (older server).
+    var safety: String?
 
     static let standard = NudgeSettings(enabled: false, tone: "freundlich", start: "08:00", end: "20:00", maxPerDay: 2)
 
-    init(enabled: Bool, tone: String, start: String, end: String, maxPerDay: Int) {
+    init(enabled: Bool, tone: String, start: String, end: String, maxPerDay: Int, safety: String? = nil) {
         self.enabled = enabled
         self.tone = tone
         self.start = start
         self.end = end
         self.maxPerDay = maxPerDay
+        self.safety = safety
     }
 
     init(json: JSONValue?) {
@@ -32,6 +36,94 @@ struct NudgeSettings: Equatable {
         start = NudgeClock.valid(hours?.str("start")) ?? fallback.start
         end = NudgeClock.valid(hours?.str("end")) ?? fallback.end
         maxPerDay = json?.int("max_per_day") ?? fallback.maxPerDay
+        safety = json?.str("guard")?.lowercased()
+    }
+}
+
+/// One level of the safety margin (`options` of `GET /v1/nudge`).
+struct NudgeGuardOption: Identifiable, Equatable {
+    let id: String
+    let label: String
+    let description: String?
+
+    /// Title for an id without server label ("streng" -> "Streng").
+    static func title(_ id: String) -> String {
+        id.prefix(1).uppercased() + id.dropFirst()
+    }
+
+    /// Reads the guard levels from `options`, whatever shape the server picks:
+    /// key `guards`, `guard`, `guard_levels` or `guard_options`; a list of ids,
+    /// a list of objects (`id`/`value`, `label`/`title`, `description`/`text`),
+    /// an object id -> description or id -> {label, description}, or an object
+    /// with such a list under `values`/`options`/`levels`. Separate texts under
+    /// `guard_descriptions`/`guards_descriptions` are merged in. Empty = the
+    /// server has no safety margin yet (the picker stays hidden).
+    static func parse(options json: JSONValue?) -> [NudgeGuardOption] {
+        guard let json else { return [] }
+        var extra: [String: String] = [:]
+        for key in ["guard_descriptions", "guards_descriptions", "guard_texts"] {
+            for (id, value) in json[key]?.objectValue ?? [:] {
+                if let text = value.stringValue { extra[id.lowercased()] = text }
+            }
+        }
+        for key in ["guards", "guard", "guard_levels", "guard_options"] {
+            guard let raw = json[key] else { continue }
+            let parsed = parse(raw, extra: extra)
+            if !parsed.isEmpty { return parsed }
+        }
+        return []
+    }
+
+    private static let order = ["streng", "mittel", "locker"]
+
+    private static func parse(_ raw: JSONValue, extra: [String: String]) -> [NudgeGuardOption] {
+        if case .array(let items) = raw {
+            var seen = Set<String>()
+            return items.compactMap { item -> NudgeGuardOption? in
+                let option: NudgeGuardOption?
+                if let id = item.stringValue?.lowercased(), !id.isEmpty {
+                    option = NudgeGuardOption(id: id, label: title(id), description: extra[id])
+                } else if item.objectValue != nil,
+                          let id = (item.str("id") ?? item.str("value") ?? item.str("key") ?? item.str("name"))?.lowercased() {
+                    option = NudgeGuardOption(
+                        id: id,
+                        label: item.str("label") ?? item.str("title") ?? title(id),
+                        description: item.str("description") ?? item.str("text") ?? item.str("detail")
+                            ?? item.str("hint") ?? extra[id]
+                    )
+                } else {
+                    option = nil
+                }
+                guard let option, seen.insert(option.id).inserted else { return nil }
+                return option
+            }
+        }
+        guard let object = raw.objectValue else { return [] }
+        for key in ["values", "options", "levels", "choices"] {
+            if let nested = object[key], case .array = nested {
+                return parse(nested, extra: extra)
+            }
+        }
+        let meta: Set<String> = ["default", "label", "title", "description", "text"]
+        let options = object.compactMap { entry -> NudgeGuardOption? in
+            let id = entry.key.lowercased()
+            if meta.contains(id) { return nil }
+            if let text = entry.value.stringValue {
+                return NudgeGuardOption(id: id, label: title(id), description: text)
+            }
+            guard entry.value.objectValue != nil else { return nil }
+            return NudgeGuardOption(
+                id: id,
+                label: entry.value.str("label") ?? entry.value.str("title") ?? title(id),
+                description: entry.value.str("description") ?? entry.value.str("text") ?? extra[id]
+            )
+        }
+        // An object has no order: known levels first, the rest by name.
+        return options.sorted { lhs, rhs in
+            let left = order.firstIndex(of: lhs.id) ?? order.count
+            let right = order.firstIndex(of: rhs.id) ?? order.count
+            return left == right ? lhs.id < rhs.id : left < right
+        }
     }
 }
 
@@ -225,8 +317,11 @@ struct NudgeOptions: Equatable {
     let hoursLower: String
     let hoursUpper: String
     let maxRange: ClosedRange<Int>
+    /// Levels of the safety margin; empty on a server without `guard`.
+    let guards: [NudgeGuardOption]
 
     init(json: JSONValue?) {
+        guards = NudgeGuardOption.parse(options: json)
         let tones = json?.strings("tones") ?? []
         self.tones = tones.isEmpty ? ["freundlich", "frech"] : tones
         let bounds = json?.strings("hours_bounds") ?? []

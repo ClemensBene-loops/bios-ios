@@ -135,6 +135,12 @@ final class LabStore: ObservableObject {
     private var catalogLoaded = false
     private var catalogNeedsLoad: Bool { !catalogLoaded && !isUnavailable && lastError == nil }
 
+    /// Loads the catalog once per app run (review screen: marker picker, units).
+    func ensureCatalog() async {
+        guard !catalogLoaded else { return }
+        await loadCatalog()
+    }
+
     private func loadCatalog() async {
         guard let client = APIClient.fromConfig() else { return }
         do {

@@ -3,7 +3,9 @@ import SwiftUI
 import UIKit
 
 /// One document: the review step while `zu_pruefen` (edit kind, date, title,
-/// values; discard single values; "N Werte übernehmen" = PATCH confirm), view
+/// values; assign an unmapped value to a catalog marker and pick a unit from
+/// the marker's accepted units; discard single values; "N Werte übernehmen" =
+/// PATCH confirm), view
 /// and edit when confirmed ("Änderungen speichern"), waiting reason while the
 /// extraction runs, reason plus "Erneut versuchen" after an error. "Verwerfen"
 /// deletes the document after a confirmation.
@@ -15,6 +17,8 @@ struct LabDocumentReviewView: View {
     struct ValueEdit: Equatable {
         var value: String
         var unit: String
+        /// Catalog marker chosen in the picker; nil = unchanged.
+        var marker: String? = nil
     }
 
     @State private var edits: [String: ValueEdit] = [:]
@@ -28,6 +32,8 @@ struct LabDocumentReviewView: View {
     @State private var saving = false
     @State private var errorText: String?
     @State private var confirmDelete = false
+    /// Value whose marker is being chosen (sheet).
+    @State private var assigning: LabValue?
 
     var body: some View {
         ScrollView {
@@ -69,11 +75,19 @@ struct LabDocumentReviewView: View {
         } message: {
             Text("Die Datei und alle erkannten Werte werden am Server gelöscht. Das lässt sich nicht rückgängig machen.")
         }
+        .sheet(item: $assigning) { value in
+            LabMarkerPickerSheet(
+                value: value,
+                selected: effectiveMarkerID(value),
+                onPick: { marker in assignMarker(marker, to: value) }
+            )
+        }
         .task {
             store.primeDocument(documentID)
             syncFromDocument()
             await store.loadDocument(documentID)
             syncFromDocument()
+            await store.ensureCatalog()
         }
         .onChange(of: store.documents[documentID]) { _, _ in
             syncFromDocument()
@@ -263,6 +277,10 @@ struct LabDocumentReviewView: View {
                         discarded: discarded.contains(value.id),
                         valueText: valueBinding(value),
                         unitText: unitBinding(value),
+                        marker: store.catalog.marker(effectiveMarkerID(value)),
+                        markerChanged: edits[value.id]?.marker.map { $0 != value.markerID } ?? false,
+                        canAssign: value.isUnmapped && !store.catalog.markers.isEmpty,
+                        assign: { assigning = value },
                         toggleDiscard: { toggleDiscard(value.id) }
                     )
                 }
@@ -361,6 +379,18 @@ struct LabDocumentReviewView: View {
         )
     }
 
+    /// The marker picked in this session, else the value's own catalog marker.
+    private func effectiveMarkerID(_ value: LabValue) -> String? {
+        edits[value.id]?.marker ?? value.markerID
+    }
+
+    private func assignMarker(_ marker: LabCatalogMarker, to value: LabValue) {
+        var edit = edits[value.id] ?? ValueEdit(value: initialValueText(value), unit: value.unit ?? "")
+        edit.marker = marker.id == value.markerID ? nil : marker.id
+        edits[value.id] = edit
+        UIAccessibility.post(notification: .announcement, argument: "\(marker.name) zugeordnet")
+    }
+
     private func toggleDiscard(_ id: String) {
         if discarded.contains(id) {
             discarded.remove(id)
@@ -446,6 +476,9 @@ struct LabDocumentReviewView: View {
             let unit = edit.unit.trimmingCharacters(in: .whitespacesAndNewlines)
             if unit != (value.unit ?? "") {
                 patch["unit"] = .string(unit)
+            }
+            if let marker = edit.marker, marker != value.markerID {
+                patch["marker_id"] = .string(marker)
             }
             if !patch.isEmpty {
                 patch["id"] = .string(value.id)
@@ -602,6 +635,13 @@ struct LabValueEditRow: View {
     let discarded: Bool
     @Binding var valueText: String
     @Binding var unitText: String
+    /// Catalog marker of the value (or the one just picked), for the unit menu.
+    let marker: LabCatalogMarker?
+    /// A marker was picked in this session and is not saved yet.
+    let markerChanged: Bool
+    /// Unmapped value and a loaded catalog: "Marker zuordnen" is offered.
+    let canAssign: Bool
+    let assign: () -> Void
     let toggleDiscard: () -> Void
 
     var body: some View {
@@ -659,6 +699,31 @@ struct LabValueEditRow: View {
                         .frame(width: 110)
                         .background(BIOSTheme.card2, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                         .accessibilityLabel("Einheit \(value.displayName)")
+                    if let choices = marker?.unitChoices, !choices.isEmpty {
+                        Menu {
+                            ForEach(choices, id: \.self) { unit in
+                                Button {
+                                    unitText = unit
+                                } label: {
+                                    if unit == unitText {
+                                        Label(unit, systemImage: "checkmark")
+                                    } else {
+                                        Text(unit)
+                                    }
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(BIOSTheme.accent)
+                                .frame(width: 28, height: 36)
+                                .contentShape(Rectangle())
+                        }
+                        .accessibilityLabel("Einheit wählen, \(value.displayName)")
+                    }
+                }
+                if canAssign || markerChanged {
+                    markerRow
                 }
                 if unsure {
                     VStack(alignment: .leading, spacing: 3) {
@@ -686,6 +751,36 @@ struct LabValueEditRow: View {
         )
     }
 
+    /// "Marker zuordnen" for an unmapped value, "Zugeordnet: HbA1c · Stoffwechsel" after the choice.
+    private var markerRow: some View {
+        Button(action: assign) {
+            HStack(spacing: 8) {
+                Image(systemName: markerChanged ? "checkmark.circle.fill" : "link.badge.plus")
+                    .foregroundStyle(markerChanged ? BIOSTheme.good : BIOSTheme.accent)
+                if markerChanged, let marker {
+                    Text("Zugeordnet: " + ([marker.name] + [marker.groupLabel].compactMap { $0 }).joined(separator: " · "))
+                        .foregroundStyle(BIOSTheme.text1)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 6)
+                    Text("Ändern")
+                        .foregroundStyle(BIOSTheme.accent)
+                } else {
+                    Text("Marker zuordnen")
+                        .foregroundStyle(BIOSTheme.accent)
+                    Spacer(minLength: 6)
+                }
+            }
+            .font(.subheadline.weight(.semibold))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(BIOSTheme.card2, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Öffnet die Liste der bekannten Marker")
+    }
+
     private var meta: String? {
         var parts: [String] = []
         if let raw = value.rawName, raw != value.displayName {
@@ -707,6 +802,111 @@ struct LabValueEditRow: View {
         if let page = value.page { parts.append("Seite \(page)") }
         if let snippet = value.snippet { parts.append("\"\(snippet)\"") }
         return parts.isEmpty ? nil : parts.joined(separator: ": ")
+    }
+}
+
+// MARK: - Marker picker
+
+/// Searchable catalog (`GET /v1/labs/catalog`) grouped like the Labor tab.
+/// Picking a marker only changes the form; it is sent with the next save.
+struct LabMarkerPickerSheet: View {
+    let value: LabValue
+    let selected: String?
+    let onPick: (LabCatalogMarker) -> Void
+    @ObservedObject private var store = LabStore.shared
+    @Environment(\.dismiss) private var dismiss
+    @State private var query = ""
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Im Befund")
+                            .font(.caption)
+                            .foregroundStyle(BIOSTheme.text3)
+                        Text(value.rawName ?? value.displayName)
+                            .font(.subheadline.weight(.semibold))
+                        Text(value.printedText)
+                            .font(.footnote)
+                            .monospacedDigit()
+                            .foregroundStyle(BIOSTheme.text2)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .listRowBackground(BIOSTheme.card)
+                }
+                if store.catalog.markers.isEmpty {
+                    Section {
+                        Text("Der Katalog ist noch nicht geladen. Bitte mit Verbindung erneut öffnen.")
+                            .font(.subheadline)
+                            .foregroundStyle(BIOSTheme.text2)
+                            .listRowBackground(BIOSTheme.card)
+                    }
+                } else if sections.isEmpty {
+                    Section {
+                        Text("Kein Marker passt zu \"\(query)\".")
+                            .font(.subheadline)
+                            .foregroundStyle(BIOSTheme.text2)
+                            .listRowBackground(BIOSTheme.card)
+                    }
+                }
+                ForEach(sections) { section in
+                    Section(section.label) {
+                        ForEach(section.markers) { marker in
+                            Button {
+                                onPick(marker)
+                                dismiss()
+                            } label: {
+                                row(marker)
+                            }
+                            .listRowBackground(BIOSTheme.card)
+                        }
+                    }
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .biosPageBackground()
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always),
+                        prompt: "Marker oder Gruppe suchen")
+            .navigationTitle("Marker zuordnen")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Abbrechen") { dismiss() }
+                }
+            }
+            .task {
+                await store.ensureCatalog()
+            }
+        }
+    }
+
+    private var sections: [LabCatalogSection] {
+        store.catalog.sections(matching: query)
+    }
+
+    private func row(_ marker: LabCatalogMarker) -> some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(marker.name)
+                    .foregroundStyle(BIOSTheme.text1)
+                if !marker.unitChoices.isEmpty {
+                    Text(marker.unitChoices.joined(separator: ", "))
+                        .font(.caption)
+                        .foregroundStyle(BIOSTheme.text3)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 6)
+            if marker.id == selected {
+                Image(systemName: "checkmark")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(BIOSTheme.accent)
+            }
+        }
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(marker.id == selected ? .isSelected : [])
     }
 }
 

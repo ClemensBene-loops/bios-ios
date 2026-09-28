@@ -120,6 +120,10 @@ struct NudgeSection: View {
         }
         .disabled(store.isSaving)
 
+        if !options.guards.isEmpty {
+            safetyPicker(options.guards)
+        }
+
         if let error = store.saveError {
             calmRow("Nicht gespeichert", detail: error, symbol: "exclamationmark.circle", tint: BIOSTheme.mid)
         }
@@ -132,6 +136,36 @@ struct NudgeSection: View {
                 tint: BIOSTheme.text2
             ))
         }
+    }
+
+    /// "Sicherheitsabstand" (`guard`), only when the server lists the levels.
+    /// Without a stored value the server default "streng" is shown.
+    private func safetyPicker(_ levels: [NudgeGuardOption]) -> some View {
+        let current = store.settings.safety ?? (levels.contains { $0.id == "streng" } ? "streng" : levels[0].id)
+        let selected = levels.first { $0.id == current }
+        return VStack(alignment: .leading, spacing: 8) {
+            Label("Sicherheitsabstand", systemImage: "shield.lefthalf.filled")
+            Picker("Sicherheitsabstand", selection: Binding(
+                get: { current },
+                set: { value in Task { await store.setSafety(value) } }
+            )) {
+                ForEach(levels) { level in
+                    Text(level.label).tag(level.id)
+                }
+                if selected == nil {
+                    Text(NudgeGuardOption.title(current)).tag(current)
+                }
+            }
+            .pickerStyle(.segmented)
+            .disabled(store.isSaving)
+            if let text = selected?.description {
+                Text(text)
+                    .font(.footnote)
+                    .foregroundStyle(BIOSTheme.text2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, 2)
     }
 
     private var todayStatus: StatusDisplay {
