@@ -345,12 +345,16 @@ struct LabValueCard: View {
 /// History chart (Swift Charts): lab values, GMI dashed, reference band, goal line.
 struct LabHistoryChartCard: View {
     let detail: LabMarkerDetail
+    /// Snapped lab date under the finger while scrubbing (nil = not scrubbing).
+    @State private var selected: Date?
 
     private struct ChartPoint: Identifiable {
         let id: String
         let date: Date
         let value: Double
         let isLast: Bool
+        var comparator: String? = nil
+        var status: LabValueStatus = .unknown
     }
 
     var body: some View {
@@ -374,11 +378,13 @@ struct LabHistoryChartCard: View {
                         yEnd: .value("Referenz oben", band.high)
                     )
                     .foregroundStyle(BIOSTheme.good.opacity(0.13))
+                    .accessibilityHidden(true)
                 }
                 if let tick {
                     RuleMark(y: .value("Ziel", tick))
                         .foregroundStyle(BIOSTheme.mid.opacity(0.75))
                         .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                        .accessibilityHidden(true)
                 }
                 ForEach(gmiPoints) { point in
                     LineMark(
@@ -388,12 +394,15 @@ struct LabHistoryChartCard: View {
                     )
                     .foregroundStyle(BIOSTheme.glucose)
                     .lineStyle(StrokeStyle(lineWidth: 1.6, dash: [4, 3]))
+                    .accessibilityHidden(true)
                     PointMark(
                         x: .value("Datum", point.date),
                         y: .value("Wert", point.value)
                     )
                     .foregroundStyle(BIOSTheme.glucose)
                     .symbolSize(22)
+                    .accessibilityLabel("GMI, 90 Tage vor \(LabFormat.fullDate(point.date))")
+                    .accessibilityValue("\(LabFormat.value(point.value, decimals: detail.marker.decimals)) \(gmiUnit)")
                 }
                 ForEach(labPoints) { point in
                     LineMark(
@@ -403,12 +412,18 @@ struct LabHistoryChartCard: View {
                     )
                     .foregroundStyle(BIOSTheme.text1)
                     .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                    .accessibilityHidden(true)
                     PointMark(
                         x: .value("Datum", point.date),
                         y: .value("Wert", point.value)
                     )
                     .foregroundStyle(point.isLast ? status.tint : BIOSTheme.text1)
-                    .symbolSize(point.isLast ? 70 : 34)
+                    .symbolSize(point.isLast || point.date == selected ? 70 : 34)
+                    .accessibilityLabel("Labor, \(LabFormat.fullDate(point.date))")
+                    .accessibilityValue(spokenValue(point))
+                }
+                if let selected {
+                    LabSelectionRule(date: selected, lines: selectionLines(selected, lab: labPoints, gmi: gmiPoints))
                 }
             }
             .chartYScale(domain: yRange)
@@ -438,10 +453,10 @@ struct LabHistoryChartCard: View {
                     }
                 }
             }
+            .labChartScrub(selected: $selected, dates: labPoints.map(\.date) + gmiPoints.map(\.date))
             .frame(height: 200)
-            .accessibilityElement(children: .ignore)
+            .accessibilityElement(children: .contain)
             .accessibilityLabel("Verlauf \(detail.marker.name)")
-            .accessibilityValue(spokenSummary(labPoints))
 
             LegendView(items: legend(hasGMI: !gmiPoints.isEmpty, hasBand: band != nil, hasTick: tick != nil))
         }
@@ -452,7 +467,8 @@ struct LabHistoryChartCard: View {
         let usable = detail.history.filter { $0.value != nil && $0.date != nil }
         return usable.enumerated().compactMap { index, point in
             guard let date = point.date, let value = point.value else { return nil }
-            return ChartPoint(id: "lab-\(point.id)", date: date, value: value, isLast: index == usable.count - 1)
+            return ChartPoint(id: "lab-\(point.id)", date: date, value: value, isLast: index == usable.count - 1,
+                              comparator: point.comparator, status: point.status)
         }
     }
 
@@ -517,10 +533,38 @@ struct LabHistoryChartCard: View {
         return items
     }
 
-    private func spokenSummary(_ points: [ChartPoint]) -> String {
-        let decimals = detail.marker.decimals
-        return points.map { "\(LabFormat.fullDate($0.date)): \(LabFormat.value($0.value, decimals: decimals))" }
-            .joined(separator: ", ")
+    private var unit: String {
+        detail.latest?.unit ?? detail.marker.unit ?? ""
+    }
+
+    private var gmiUnit: String {
+        detail.history.lazy.compactMap { $0.gmi?.unit }.first ?? "%"
+    }
+
+    private func valueText(_ point: ChartPoint) -> String {
+        let value = LabFormat.value(point.value, decimals: detail.marker.decimals, comparator: point.comparator)
+        return unit.isEmpty ? value : "\(value) \(unit)"
+    }
+
+    /// Scrub bubble: lab date, the lab value(s) with unit and status, the GMI of that date.
+    private func selectionLines(_ date: Date, lab: [ChartPoint], gmi: [ChartPoint]) -> [String] {
+        var lines = [LabFormat.fullDate(date)]
+        let labAtDate = lab.filter { $0.date == date }
+        let gmiAtDate = gmi.filter { $0.date == date }
+        let named = !gmiAtDate.isEmpty
+        for point in labAtDate {
+            lines.append((named ? "Labor " : "") + valueText(point) + LabChartText.statusSuffix(point.status))
+        }
+        for point in gmiAtDate {
+            lines.append("GMI \(LabFormat.value(point.value, decimals: detail.marker.decimals)) \(gmiUnit)")
+        }
+        return lines
+    }
+
+    private func spokenValue(_ point: ChartPoint) -> String {
+        var text = valueText(point)
+        if !point.status.spoken.isEmpty { text += ", " + point.status.spoken }
+        return text
     }
 }
 

@@ -1,3 +1,4 @@
+import Charts
 import SwiftUI
 
 // Building blocks of the Labor tab: tags, the lab reference bar with the value
@@ -263,5 +264,85 @@ struct LabSectionLabel: View {
         }
         .padding(.horizontal, 4)
         .padding(.top, 8)
+    }
+}
+
+// MARK: - Scrubbing
+
+/// Scrubbing on the Labor charts, the same interaction as `BIOSChartBody`: hold
+/// (0.25 s) and drag, the UIKit `ScrubGesture` never fights the scroll view, the
+/// selection snaps to the nearest point in time, selection haptics on each step.
+struct LabChartScrub: ViewModifier {
+    @Binding var selected: Date?
+    /// Snap targets (any order, duplicates allowed).
+    let dates: [Date]
+
+    func body(content: Content) -> some View {
+        content
+            .chartOverlay { proxy in
+                GeometryReader { geometry in
+                    ScrubGesture(
+                        onChange: { x in update(x: x, proxy: proxy, geometry: geometry) },
+                        onEnd: { selected = nil }
+                    )
+                    .accessibilityHidden(true)
+                }
+            }
+            .sensoryFeedback(.selection, trigger: selected)
+    }
+
+    private func update(x: CGFloat, proxy: ChartProxy, geometry: GeometryProxy) {
+        guard let plotFrame = proxy.plotFrame else { return }
+        let origin = geometry[plotFrame].origin
+        guard let date = proxy.value(atX: x - origin.x, as: Date.self),
+              let nearest = Self.nearest(to: date, in: dates) else { return }
+        if nearest != selected {
+            selected = nearest
+        }
+    }
+
+    static func nearest(to date: Date, in dates: [Date]) -> Date? {
+        dates.min { abs($0.timeIntervalSince(date)) < abs($1.timeIntervalSince(date)) }
+    }
+}
+
+extension View {
+    func labChartScrub(selected: Binding<Date?>, dates: [Date]) -> some View {
+        modifier(LabChartScrub(selected: selected, dates: dates))
+    }
+}
+
+/// Dashed vertical rule at the selected point with the scrub bubble on top,
+/// styled like the selection of `BIOSChartBody`. Drawn last, so it lies above
+/// the marks; the reference band underneath stays visible.
+struct LabSelectionRule: ChartContent {
+    let date: Date
+    let lines: [String]
+
+    var body: some ChartContent {
+        RuleMark(x: .value("Auswahl", date))
+            .foregroundStyle(Color.white.opacity(0.65))
+            .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+            .annotation(
+                position: .top,
+                spacing: 0,
+                overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))
+            ) {
+                SelectionBubble(lines: lines)
+            }
+            .accessibilityHidden(true)
+    }
+}
+
+enum LabChartText {
+    /// "27.09.2026, 21:36" with a time of day, else "15.09.2026".
+    static func when(_ date: Date, timed: Bool) -> String {
+        timed ? "\(LabFormat.fullDate(date)), \(BIOSFormat.time(date))" : LabFormat.fullDate(date)
+    }
+
+    /// " · hoch" for a flagged status, else "".
+    static func statusSuffix(_ status: LabValueStatus) -> String {
+        guard status.isFlagged, let tag = status.tag else { return "" }
+        return " · " + tag
     }
 }

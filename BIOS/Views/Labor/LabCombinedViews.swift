@@ -317,7 +317,7 @@ struct LabCombinedDetailContent: View {
 
         if detail.history.contains(where: { $0.value != nil && $0.when != nil }) {
             LabDeviceChartCard(detail: detail,
-                               note: "Kreise: kapillär (Fingerstich, Ambulanz), Quadrate: Labor. Antippen oder ziehen zeigt den Wert.")
+                               note: "Kreise: kapillär (Fingerstich, Ambulanz), Quadrate: Labor. Gedrückt halten und ziehen zeigt den Wert.")
         }
 
         if let comparison = detail.cgmComparison, comparison.nValues ?? comparison.nPairs > 0 {

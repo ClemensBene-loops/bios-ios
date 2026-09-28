@@ -128,10 +128,12 @@ struct LabDeviceValueCard: View {
     }
 }
 
-/// Readings over time (x = date and time of day). Tap or drag shows one reading.
+/// Readings over time (x = date and time of day). Hold and drag shows one reading
+/// (same scrubbing as the other charts of the app).
 struct LabDeviceChartCard: View {
     let detail: LabMarkerDetail
-    var note = "Jeder Punkt ist ein Fingerstich, mit Datum und Uhrzeit. Antippen oder ziehen zeigt den Wert."
+    var note = "Jeder Punkt ist ein Fingerstich, mit Datum und Uhrzeit. Gedrückt halten und ziehen zeigt den Wert."
+    /// Snapped time under the finger while scrubbing (nil = not scrubbing).
     @State private var selected: Date?
 
     private struct Reading: Identifiable {
@@ -141,27 +143,21 @@ struct LabDeviceChartCard: View {
         let origin: String?
         /// Lab value of the merged "Blutzucker" (drawn as a square).
         let lab: Bool
+        /// Measured with a time of day (fingerstick, capillary); lab values carry only the day.
+        let timed: Bool
+        let comparator: String?
+        let status: LabValueStatus
     }
 
     var body: some View {
         let readings = makeReadings()
-        let focus = nearest(to: selected, in: readings) ?? readings.last
+        let focusID = selected == nil ? readings.last?.id : nil
         let yRange = yScale(readings)
         let xRange = xScale(readings)
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(readings.count > 1 ? "Verlauf" : "Bisher ein Wert")
-                    .font(.headline)
-                    .accessibilityAddTraits(.isHeader)
-                Spacer(minLength: 6)
-                if let focus {
-                    Text("\(BIOSFormat.dayLabel(focus.date)), \(BIOSFormat.time(focus.date)) · \(LabFormat.value(focus.value, decimals: detail.marker.decimals)) \(unit)")
-                        .font(.caption.weight(.semibold))
-                        .monospacedDigit()
-                        .foregroundStyle(BIOSTheme.text2)
-                        .accessibilityHidden(true)
-                }
-            }
+            Text(readings.count > 1 ? "Verlauf" : "Bisher ein Wert")
+                .font(.headline)
+                .accessibilityAddTraits(.isHeader)
             Chart {
                 ForEach(readings) { reading in
                     LineMark(
@@ -170,23 +166,23 @@ struct LabDeviceChartCard: View {
                     )
                     .foregroundStyle(BIOSTheme.text3)
                     .lineStyle(StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round))
+                    .accessibilityHidden(true)
                     PointMark(
                         x: .value("Zeit", reading.date),
                         y: .value("Wert", reading.value)
                     )
-                    .foregroundStyle(reading.id == focus?.id ? BIOSTheme.accent : BIOSTheme.text1)
+                    .foregroundStyle(isHighlighted(reading, focusID: focusID) ? BIOSTheme.accent : BIOSTheme.text1)
                     .symbol(reading.lab ? BasicChartSymbolShape.square : BasicChartSymbolShape.circle)
-                    .symbolSize(reading.id == focus?.id ? 70 : 30)
+                    .symbolSize(isHighlighted(reading, focusID: focusID) ? 70 : 30)
+                    .accessibilityLabel(spokenWhen(reading))
+                    .accessibilityValue(spokenValue(reading))
                 }
-                if let focus, selected != nil {
-                    RuleMark(x: .value("Auswahl", focus.date))
-                        .foregroundStyle(BIOSTheme.accent.opacity(0.5))
-                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                if let selected {
+                    LabSelectionRule(date: selected, lines: selectionLines(selected, in: readings))
                 }
             }
             .chartYScale(domain: yRange)
             .chartXScale(domain: xRange)
-            .chartXSelection(value: $selected)
             .chartLegend(.hidden)
             .chartYAxis {
                 AxisMarks(position: .trailing, values: .automatic(desiredCount: 4)) { value in
@@ -212,10 +208,10 @@ struct LabDeviceChartCard: View {
                     }
                 }
             }
+            .labChartScrub(selected: $selected, dates: readings.map(\.date))
             .frame(height: 190)
-            .accessibilityElement(children: .ignore)
+            .accessibilityElement(children: .contain)
             .accessibilityLabel("Verlauf \(detail.marker.name)")
-            .accessibilityValue(spoken(readings))
 
             Text(note)
                 .font(.caption)
@@ -232,13 +228,50 @@ struct LabDeviceChartCard: View {
     private func makeReadings() -> [Reading] {
         detail.history.compactMap { point in
             guard let date = point.when, let value = point.value else { return nil }
-            return Reading(id: point.id, date: date, value: value, origin: point.originText, lab: point.isLabOrigin)
+            return Reading(id: point.id, date: date, value: value, origin: point.originText, lab: point.isLabOrigin,
+                           timed: point.measuredAt != nil, comparator: point.comparator, status: point.status)
         }
     }
 
-    private func nearest(to date: Date?, in readings: [Reading]) -> Reading? {
-        guard let date else { return nil }
-        return readings.min { abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date)) }
+    /// The selected reading while scrubbing, else the newest one.
+    private func isHighlighted(_ reading: Reading, focusID: String?) -> Bool {
+        if let selected { return reading.date == selected }
+        return reading.id == focusID
+    }
+
+    private func valueText(_ reading: Reading) -> String {
+        "\(LabFormat.value(reading.value, decimals: detail.marker.decimals, comparator: reading.comparator)) \(unit)"
+    }
+
+    /// Scrub bubble: date (with time for capillary points) and origin, then value, unit
+    /// and the lab status (only lab values have a range).
+    private func selectionLines(_ date: Date, in readings: [Reading]) -> [String] {
+        let atDate = readings.filter { $0.date == date }
+        guard let first = atDate.first else { return [] }
+        let title = LabChartText.when(date, timed: first.timed)
+        if atDate.count == 1 {
+            return [title + (first.origin.map { " · \($0)" } ?? ""), valueLine(first)]
+        }
+        return [title] + atDate.map { reading in
+            valueLine(reading) + (reading.origin.map { " · \($0)" } ?? "")
+        }
+    }
+
+    private func valueLine(_ reading: Reading) -> String {
+        valueText(reading) + (reading.lab ? LabChartText.statusSuffix(reading.status) : "")
+    }
+
+    private func spokenWhen(_ reading: Reading) -> String {
+        reading.timed
+            ? "\(LabFormat.fullDate(reading.date)), \(BIOSFormat.time(reading.date)) Uhr"
+            : LabFormat.fullDate(reading.date)
+    }
+
+    private func spokenValue(_ reading: Reading) -> String {
+        var parts = [valueText(reading)]
+        if let origin = reading.origin { parts.append(origin) }
+        if reading.lab, !reading.status.spoken.isEmpty { parts.append(reading.status.spoken) }
+        return parts.joined(separator: ", ")
     }
 
     private func yScale(_ readings: [Reading]) -> ClosedRange<Double> {
@@ -256,14 +289,6 @@ struct LabDeviceChartCard: View {
         let pad: TimeInterval = first == last ? 86_400 : max(3_600 * 3, last.timeIntervalSince(first) * 0.04)
         return first.addingTimeInterval(-pad)...last.addingTimeInterval(pad)
     }
-
-    /// Last readings spoken with day and time (at most 12).
-    private func spoken(_ readings: [Reading]) -> String {
-        readings.suffix(12).map {
-            "\(BIOSFormat.shortDate($0.date)) \(BIOSFormat.time($0.date)) Uhr: \(LabFormat.value($0.value, decimals: detail.marker.decimals)) \(unit)"
-        }
-        .joined(separator: ", ")
-    }
 }
 
 /// Sensor vs finger: the last CGM value before each fingerstick, difference in
@@ -271,6 +296,8 @@ struct LabDeviceChartCard: View {
 struct LabCGMComparisonCard: View {
     let comparison: LabCGMComparison
     @State private var showAll = false
+    /// Snapped fingerstick time under the finger while scrubbing (nil = not scrubbing).
+    @State private var selected: Date?
 
     private let collapsedCount = 8
 
@@ -395,8 +422,11 @@ struct LabCGMComparisonCard: View {
                             yStart: .value("Finger", pair.finger),
                             yEnd: .value("Sensor", pair.cgm)
                         )
-                        .foregroundStyle(Color.white.opacity(0.18))
+                        .foregroundStyle(Color.white.opacity(date == selected ? 0.4 : 0.18))
                         .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round))
+                        // One VoiceOver element per pair: finger, sensor, difference.
+                        .accessibilityLabel(pairWhen(date))
+                        .accessibilityValue(spokenPairValues(pair))
                     }
                 }
                 ForEach(values) { item in
@@ -406,7 +436,11 @@ struct LabCGMComparisonCard: View {
                     )
                     .foregroundStyle(item.series == "Finger" ? BIOSTheme.text1 : BIOSTheme.glucose)
                     .symbol(item.series == "Finger" ? BasicChartSymbolShape.circle : BasicChartSymbolShape.diamond)
-                    .symbolSize(30)
+                    .symbolSize(item.date == selected ? 60 : 30)
+                    .accessibilityHidden(true)
+                }
+                if let selected {
+                    LabSelectionRule(date: selected, lines: selectionLines(selected))
                 }
             }
             .chartYScale(domain: yRange)
@@ -435,10 +469,10 @@ struct LabCGMComparisonCard: View {
                     }
                 }
             }
+            .labChartScrub(selected: $selected, dates: comparison.pairs.compactMap(\.when))
             .frame(height: 170)
-            .accessibilityElement(children: .ignore)
+            .accessibilityElement(children: .contain)
             .accessibilityLabel("Finger und Sensor im Vergleich, \(comparison.pairs.count) Paare")
-            .accessibilityValue("Die Einzelwerte stehen in der Tabelle darunter.")
 
             LegendView(items: [
                 LegendItem(color: BIOSTheme.text1, text: "Finger", mark: .dot),
@@ -446,6 +480,35 @@ struct LabCGMComparisonCard: View {
                 LegendItem(color: Color.white, text: "Abstand", mark: .line, opacity: 0.3),
             ])
         }
+    }
+
+    /// Scrub bubble: time of the fingerstick, finger and sensor value, difference.
+    private func selectionLines(_ date: Date) -> [String] {
+        guard let pair = comparison.pairs.first(where: { $0.when == date }) else { return [] }
+        let unit = comparison.unit
+        var difference = "Differenz \(BIOSFormat.signed(pair.diff, digits: 0)) \(unit)"
+        if let pct = pair.diffPct { difference += " · \(BIOSFormat.signed(pct, digits: 1)) %" }
+        return [
+            LabChartText.when(date, timed: true),
+            "Finger \(LabFormat.value(pair.finger, decimals: 0)) \(unit)",
+            "Sensor \(LabFormat.value(pair.cgm, decimals: 0)) \(unit)",
+            difference,
+        ]
+    }
+
+    private func pairWhen(_ date: Date) -> String {
+        "\(LabFormat.fullDate(date)), \(BIOSFormat.time(date)) Uhr"
+    }
+
+    /// Finger, sensor and difference of one pair (the time is the element's label).
+    private func spokenPairValues(_ pair: LabCGMPair) -> String {
+        var text = "Finger \(LabFormat.value(pair.finger, decimals: 0)), Sensor \(LabFormat.value(pair.cgm, decimals: 0)) \(comparison.unit)"
+        let direction = pair.diff > 0 ? "Sensor höher" : (pair.diff < 0 ? "Sensor niedriger" : "gleich")
+        text += ", Differenz \(BIOSFormat.number(abs(pair.diff), digits: 0)) \(comparison.unit)"
+        if let pct = pair.diffPct {
+            text += ", \(BIOSFormat.number(abs(pct), digits: 1)) Prozent"
+        }
+        return text + ", \(direction)"
     }
 
     // MARK: Table
