@@ -452,19 +452,36 @@ final class LiveActivityController: ObservableObject {
         if let health = json?.obj("health") {
             state.healthScore = (health.double("score") ?? health.double("value")).map { Int($0.rounded()) }
             state.healthLevel = health.str("level") ?? health.str("level_text")
+            // Six slots in the formula 4 order (HealthPillarPalette.order).
             var pillars = [Double?](repeating: nil, count: HealthPillarPalette.pillars.count)
-            for pillar in health.list("pillars") {
-                guard let key = pillar.str("key") ?? pillar.str("id"),
-                      let score = pillar.double("score") ?? pillar.double("value") else { continue }
-                if let index = HealthPillarPalette.index(of: key, label: pillar.str("label")) {
-                    pillars[index] = score
+            let ring = health.list("ring")
+            if !ring.isEmpty {
+                // Formula 4: the ring fills, placed by key.
+                for entry in ring {
+                    guard let key = entry.str("key"),
+                          let index = HealthPillarPalette.order.firstIndex(of: HealthPillarPalette.canonical(key, label: entry.str("label")))
+                    else { continue }
+                    pillars[index] = entry.double("fill")
                 }
-            }
-            state.pillarsMini = pillars.contains { $0 != nil } ? pillars : nil
-            // Server list in ring order wins (`health.pillars_mini`).
-            let mini = health.list("pillars_mini")
-            if mini.count == HealthPillarPalette.pillars.count {
-                state.pillarsMini = mini.map { $0.finiteNumber }
+                state.pillarsMini = pillars
+            } else {
+                // Old server: legacy pillars mapped onto the new slots
+                // (Stoffwechsel -> Zucker, Kreislauf -> Bewegung, Routine ->
+                // Therapie; Abwehr has no slot), so the palette colors match.
+                for pillar in health.list("pillars") {
+                    guard let key = pillar.str("key") ?? pillar.str("id"),
+                          let score = pillar.double("score") ?? pillar.double("value") else { continue }
+                    if let index = HealthPillarPalette.index(of: key, label: pillar.str("label")) {
+                        pillars[index] = score
+                    }
+                }
+                state.pillarsMini = pillars.contains { $0 != nil } ? pillars : nil
+                if state.pillarsMini == nil {
+                    let mini = health.list("pillars_mini")
+                    if mini.count == HealthPillarPalette.pillars.count {
+                        state.pillarsMini = mini.map { $0.finiteNumber }
+                    }
+                }
             }
         }
         if state.healthScore == nil, let current {

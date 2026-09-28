@@ -1,15 +1,163 @@
 import SwiftUI
 
-// Gesundheits-Score detail, below each pillar row: the pillar's parts
-// (`pillars[].parts`) and for Labor (formula 3, background pillar without a
-// ring segment) the groups with scores and the flagged values.
+// Gesundheits-Score detail, below each row: formula 4 segment extras (parts,
+// strength days, Labor with Stand, hints, HbA1c goal, groups and flagged
+// values) and, for old servers, the legacy pillar extras (parts, Labor as a
+// background pillar without a ring segment).
 
-/// Below a pillar row in the detail: its parts (Routine: Krafttraining,
+/// Below a formula 4 segment row: parts where present, the strength days of
+/// Bewegung, and for Labor the Stand, hints ("HbA1c fällig"), the HbA1c with
+/// its goal, the groups and the values below 100 points.
+struct SegmentExtras: View {
+    let segment: HealthSegment
+
+    var body: some View {
+        if hasContent {
+            VStack(alignment: .leading, spacing: 10) {
+                if let progress = segment.sessionProgress, segment.parts.isEmpty {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Krafttrainingstage in 14 Tagen")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(BIOSTheme.text3)
+                        SegmentedProgress(done: progress.done, total: progress.total, color: segment.displayColor)
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Krafttrainingstage in 14 Tagen: \(progress.done) von \(progress.total)")
+                }
+                ForEach(segment.parts) { part in
+                    PillarPartRow(part: part, color: segment.color)
+                }
+                if segment.isLabor {
+                    laborContent
+                }
+            }
+            .padding(.leading, 16)
+            .padding(.bottom, 12)
+        }
+    }
+
+    @ViewBuilder
+    private var laborContent: some View {
+        if !segment.hints.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(segment.hints, id: \.self) { hint in
+                    Label(hint, systemImage: "calendar.badge.exclamationmark")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(BIOSTheme.midText)
+                }
+            }
+            .accessibilityElement(children: .combine)
+        }
+        if let hba1c = segment.hba1c {
+            HbA1cGoalRow(hba1c: hba1c, color: segment.color)
+        }
+        LabGroupsAndFlags(groups: segment.labGroups, flagged: segment.labFlagged, color: segment.color)
+        Text(labNote)
+            .font(.caption)
+            .foregroundStyle(BIOSTheme.text3)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var hasContent: Bool {
+        segment.sessionProgress != nil || !segment.parts.isEmpty || segment.isLabor
+    }
+
+    /// "Stand 01.09., 23 Werte. Zählt voll bis 180 Tage nach dem jüngsten Befund ..."
+    private var labNote: String {
+        var facts: [String] = []
+        if let stand = segment.standLabel { facts.append(stand) }
+        if let count = segment.labMarkerCount { facts.append(count == 1 ? "1 Wert" : "\(count) Werte") }
+        var text = facts.isEmpty ? "" : facts.joined(separator: ", ") + ". "
+        text += "Zählt voll bis 180 Tage nach dem jüngsten Befund, danach verblasst das Gewicht bis 12 Monate."
+        return text
+    }
+}
+
+/// Labor: "HbA1c 7,0 %" with points, "Ziel unter 7 %, bestmöglich 6,0 bis 6,5 %".
+struct HbA1cGoalRow: View {
+    let hba1c: HealthHbA1c
+    let color: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(hba1c.valueLine)
+                    .font(.subheadline.weight(.semibold))
+                    .monospacedDigit()
+                Spacer(minLength: 8)
+                if let points = hba1c.points {
+                    Text(BIOSFormat.number(points))
+                        .font(.subheadline.weight(.semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(color)
+                }
+            }
+            if let goal = hba1c.goalText {
+                Text(goal)
+                    .font(.footnote)
+                    .monospacedDigit()
+                    .foregroundStyle(BIOSTheme.text2)
+            }
+            if let meta = hba1c.metaLine {
+                Text(meta)
+                    .font(.caption2)
+                    .monospacedDigit()
+                    .foregroundStyle(BIOSTheme.text3)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel([hba1c.valueLine, hba1c.points.map { "\(BIOSFormat.number($0)) Punkte" },
+                             hba1c.goalText, hba1c.metaLine].compactMap { $0 }.joined(separator: ", "))
+    }
+}
+
+/// Labor groups with scores and the values below 100 points (tap opens the
+/// marker in the Labor tab). Shared by the formula 4 segment and the legacy pillar.
+struct LabGroupsAndFlags: View {
+    @EnvironmentObject private var router: Router
+    let groups: [HealthLabGroup]
+    let flagged: [HealthLabFlag]
+    let color: Color
+
+    var body: some View {
+        if !groups.isEmpty {
+            subheading("Gruppen")
+            ForEach(groups) { group in
+                LabGroupScoreRow(group: group, color: color)
+            }
+        }
+        if !flagged.isEmpty {
+            subheading("Auffällige Werte")
+            ForEach(flagged) { flag in
+                if let marker = flag.marker {
+                    Button {
+                        router.showLabor(.marker(marker))
+                    } label: {
+                        LabFlagScoreRow(flag: flag, showsChevron: true)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Öffnet den Wert im Tab Labor")
+                } else {
+                    LabFlagScoreRow(flag: flag, showsChevron: false)
+                }
+            }
+        }
+    }
+
+    private func subheading(_ text: String) -> some View {
+        Text(text)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(BIOSTheme.text3)
+            .padding(.top, 2)
+            .accessibilityAddTraits(.isHeader)
+    }
+}
+
+/// Below a legacy pillar row (old servers): its parts (Routine: Krafttraining,
 /// Einnahmen; Kreislauf: Ruhepuls, Aktivität, Blutdruck; unknown parts
 /// generically) and for Labor the groups with scores and the values below 100
 /// points (tap opens the marker in the Labor tab).
 struct PillarExtras: View {
-    @EnvironmentObject private var router: Router
     let pillar: HealthPillar
 
     var body: some View {
@@ -18,28 +166,7 @@ struct PillarExtras: View {
                 ForEach(pillar.parts) { part in
                     PillarPartRow(part: part, color: pillar.color)
                 }
-                if !pillar.labGroups.isEmpty {
-                    subheading("Gruppen")
-                    ForEach(pillar.labGroups) { group in
-                        LabGroupScoreRow(group: group, color: pillar.color)
-                    }
-                }
-                if !pillar.labFlagged.isEmpty {
-                    subheading("Auffällige Werte")
-                    ForEach(pillar.labFlagged) { flag in
-                        if let marker = flag.marker {
-                            Button {
-                                router.showLabor(.marker(marker))
-                            } label: {
-                                LabFlagScoreRow(flag: flag, showsChevron: true)
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityHint("Öffnet den Wert im Tab Labor")
-                        } else {
-                            LabFlagScoreRow(flag: flag, showsChevron: false)
-                        }
-                    }
-                }
+                LabGroupsAndFlags(groups: pillar.labGroups, flagged: pillar.labFlagged, color: pillar.color)
                 if pillar.isBackground {
                     Text(labNote)
                         .font(.caption)
@@ -54,14 +181,6 @@ struct PillarExtras: View {
 
     private var hasContent: Bool {
         !pillar.parts.isEmpty || !pillar.labGroups.isEmpty || !pillar.labFlagged.isEmpty || pillar.isBackground
-    }
-
-    private func subheading(_ text: String) -> some View {
-        Text(text)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(BIOSTheme.text3)
-            .padding(.top, 2)
-            .accessibilityAddTraits(.isHeader)
     }
 
     /// "Im Hintergrund, nicht im Ring ... 23 Werte, Stand 01.09."

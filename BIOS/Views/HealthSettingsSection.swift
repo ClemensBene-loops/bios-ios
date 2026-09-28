@@ -40,7 +40,7 @@ struct HealthSettingsSection: View {
         } header: {
             Text("Gesundheits-Score")
         } footer: {
-            Text("Krafttraining pro Woche: Ziel für den Teil Krafttraining der Säule Routine (Tage mit Krafttraining in 7 Tagen, laut Whoop). 0 schaltet den Teil aus.")
+            Text("Krafttraining pro Woche: Ziel für den Bereich Bewegung (Tage mit Krafttraining laut Whoop, gezählt über 14 Tage gegen das doppelte Wochenziel, Kranktage verkleinern das Ziel). 0 schaltet den Bereich aus.")
         }
         .onAppear {
             store.adoptDashboardValue(dashboardStore.dashboard?.health?.strengthGoal)

@@ -184,10 +184,12 @@ private struct InfoColumn: View {
     }
 }
 
-// MARK: - Health ring (six pillar segments)
+// MARK: - Health ring (six segments)
 
 /// Mini ring: the shared six-arc ring (Shared/HealthRing.swift) with
-/// pillar-tinted tracks, the score and the level word in the middle.
+/// segment-tinted tracks, the score and the level word in the middle.
+/// Formula 4 order and arcs (Schlaf, Erholung, Zucker, Bewegung, Therapie,
+/// Labor; 20/20/25/15/10/10), colors from HealthPillarPalette.
 /// `diameter` is the center line circle of the stroke.
 struct HealthRingView: View {
     let state: BIOSActivityState
@@ -198,7 +200,8 @@ struct HealthRingView: View {
 
     var body: some View {
         ZStack {
-            HealthSegmentRing(values: state.pillarsMini ?? [], radius: diameter / 2, lineWidth: lineWidth, track: .tinted)
+            HealthSegmentRing(values: state.pillarsMini ?? [], arcs: HealthPillarPalette.arcs,
+                              radius: diameter / 2, lineWidth: lineWidth, track: .tinted)
 
             VStack(spacing: -3) {
                 Text(state.healthScoreText)

@@ -31,7 +31,8 @@ Mehr incl. "Sicherheitsabstand" once the server offers it), Labor tab (Werte |
 Befunde, review step with marker assignment and unit choice), the share
 extension `BIOSShare`, Gesundheits-Score formula 3 (Labor as a background pillar
 without a ring segment, pillar parts in the detail, "Krafttraining pro Woche" in
-Mehr) and "Reiseziele" in Umwelt. `main` still holds v1 (build `1.0 (2)`, PR #1) until
+Mehr), Gesundheits-Score formula 4 (six ring segments from `health.ring`, Labor
+as a real segment, one visible cap, chips) and "Reiseziele" in Umwelt. `main` still holds v1 (build `1.0 (2)`, PR #1) until
 `v2-dashboard` and then `v3` are merged. The share extension needs workflows 2 and
 3 once before the next build (see "Share extension" below).
 
@@ -111,6 +112,24 @@ points and the `flagged` values (tap opens the marker in the Labor tab). Mehr >
 "Gesundheits-Score": stepper "Krafttraining pro Woche" 0 to 7 (0 = off),
 `PATCH /v1/health/settings`; on an error the old value comes back with a calm line.
 
+Formula 4 (28.09.2026 evening, contract section "Formel 4", fixture
+`docs/fixtures/health_v4.json`): when the server sends `health.ring`, the app draws
+exactly these six segments in server order (Schlaf, Erholung, Zucker, Bewegung,
+Therapie, Labor), arc length = `arc` (20/20/25/15/10/10), fill = `fill`, colors
+from the server. Status styles: `keine_daten` grey dashed, `pause` grey ("Pause
+wegen Infekt"), `nicht_erfasst` grey, `verblasst` (Labor only) paler with
+`stand_label`. Labor is a real segment now. Under the score: `cap.text` when the cap
+applies, `cap.lift` in a calm smaller line, then the chips (`abzug`, `stand`,
+`alkohol`; `penalty.reason` as `abzug` when missing). Level words from `levels`
+(85 sehr gut, 70 gut, 50 mittel). The detail lists every segment with status,
+reason, `weight_used`, trend and `delta_week`, the parts where present (Bewegung:
+strength days in 14 days), Labor with Stand, hints ("HbA1c fällig"), HbA1c with
+its goal ("Ziel unter 7 %, bestmöglich 6,0 bis 6,5 %"), groups and flagged values
+(from the matching `pillars[]` entry, `segment` = ring key). Without `ring` (old
+server) the formula 1 to 3 display above stays unchanged. Live Activity and
+widgets: `pillars_mini` in the new order, palette `HealthPillarPalette.pillars`
+with the same arcs, no new `ContentState` key.
+
 - **Heute card** (`HealthScoreCard`): ring 138 pt / line 11 pt with number and
   level word, delta pill, freshness line, pillar grid (3 columns); with formula 2
   and `cap.applied` a subtle line "Gedeckelt: Infektmuster Tag 4 · ohne Deckel 65"
@@ -125,9 +144,11 @@ points and the `flagged` values (tap opens the marker in the Labor tab). Mehr >
   Dynamic Island (44 / 3.5) from `pillars_mini`.
 
 **Ring geometry.** One geometry for every ring, in `Shared/HealthRing.swift`
-(compiled into app and widget extension, no copies per view): six equal arcs in
-the server pillar order (`ORDER`: Schlaf, Erholung, Stoffwechsel, Kreislauf,
-Abwehr, Routine), start at 12 o'clock, clockwise. `r` is the center line of the
+(compiled into app and widget extension, no copies per view): six arcs in the
+server order, start at 12 o'clock, clockwise; formula 4 spans proportional to
+`arc` (`span_i = 360° · arc_i / Σarc`, start = sum of the spans before), old
+servers six equal arcs (Schlaf, Erholung, Stoffwechsel, Kreislauf, Abwehr,
+Routine, `HealthPillarPalette.legacyPillars`). Below with equal spans. `r` is the center line of the
 stroke (`(size − lineWidth) / 2`), a fixed visible gap of 3 pt becomes the angle
 `g = 3 pt / r`, and the round-cap overhang `c = (lineWidth / 2) / r` is taken off
 both ends so every cap ends inside its own arc:
@@ -482,7 +503,7 @@ once any activity that still appears (a 06:30 push-to-start racing the delete)
 and never uploads its update token. So the 06:30 server start cannot bring it back.
 
 Widget extension `BIOSWidgets` (`at.bene.bios.widgets`, iOS 17). Lock screen banner:
-left the Gesundheits-Score ring (six pillar colors), right the current information
+left the Gesundheits-Score ring (six segment colors), right the current information
 per mode (`normal`: next intake; `infection`: "Infekt · Tag n" + Infekt-Score;
 `temperature`: value, time, "Erhöht"), bottom the supplements. Dynamic Island:
 minimal = "b" mark with a status dot (the usual state next to Loop), compact =
@@ -530,7 +551,7 @@ score detail (130/10); see "Gesundheits-Score" above.
 | --- | --- | --- |
 | `health_score` | `Int?` | Gesundheits-Score 0 to 100 |
 | `health_level` | `String?` | level word (fallback from the score: 80 / 65 / 50) |
-| `pillars_mini` | `[Double?]?` | six pillar scores in ring order, null = no data |
+| `pillars_mini` | `[Double?]?` | six segment fills in ring order (formula 4: Schlaf, Erholung, Zucker, Bewegung, Therapie, Labor), null = no data |
 | `mode` | `String` | `normal`, `infection`, `temperature` (unknown = normal) |
 | `infection_score`, `infection_day` | `Int?` | Infekt-Score, day of the episode |
 | `infection_kind` | `String?` | `infekt` or `infekt_frueh` |

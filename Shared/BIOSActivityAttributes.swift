@@ -97,9 +97,10 @@ struct BIOSActivityState: Codable, Hashable, Sendable {
 
     var healthScore: Int?
     var healthLevel: String?
-    /// Six pillar scores 0...100 in ring order (HealthPillarPalette.order:
-    /// Schlaf, Erholung, Stoffwechsel, Kreislauf, Abwehr, Routine), null = no
-    /// data (grey dashed slot).
+    /// Six segment fills 0...100 in ring order (HealthPillarPalette.order,
+    /// formula 4 since 28.09.2026: Schlaf, Erholung, Zucker, Bewegung,
+    /// Therapie, Labor), null = no value (grey dashed slot). Key and length
+    /// unchanged since formula 1.
     var pillarsMini: [Double?]?
     var mode: BIOSActivityMode = .normal
     var infectionScore: Int?
@@ -329,7 +330,7 @@ enum BIOSActivityColors {
     static let text2 = Color(activityHex: 0xA7AEBA)
     /// Banner background (dark, slightly green like the mockup).
     static let banner = Color(activityHex: 0x1A2420)
-    // Pillar order and colors: HealthPillarPalette (Shared/HealthRing.swift).
+    // Segment order, arcs and colors: HealthPillarPalette (Shared/HealthRing.swift).
 }
 
 extension Color {

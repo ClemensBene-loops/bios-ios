@@ -1,22 +1,34 @@
 import SwiftUI
 
-// Gesundheits-Score, design A ("Säulen"): six-segment ring in the pillar
-// colors, number + level word, week delta pill, pillar grid (Heute) and the
-// pillar list with bars, trends and reasons (detail). Observation only.
+// Gesundheits-Score, design A: segment ring in the server colors, number +
+// level word, week delta pill, cap and chips, the grid of the six Bereiche
+// (Heute) and the list with bars, trends and reasons (detail). Formula 4
+// (`health.ring`): six segments, arc length = weight, status styles. Old
+// servers without `ring` keep the legacy display (six equal pillar arcs,
+// Labor in the background). Observation only.
 
-/// Ring input in the shared ring order (HealthPillarPalette): score per slot
-/// (nil = pillar missing, dashed grey) and color per slot. Six slots only:
-/// background pillars (Labor) never get a segment.
+/// Ring input per slot: value, color, arc weight and style. Formula 4 from
+/// `health.ring` in server order; old servers the six legacy pillars in
+/// equal arcs (Labor has no segment there).
 enum HealthRing {
-    static func values(_ health: HealthModel) -> [Double?] {
-        HealthPillarPalette.order.map { key in pillar(health, key)?.score }
+    struct Input {
+        let values: [Double?]
+        let colors: [Color]
+        let arcs: [Double]?
+        let styles: [HealthRingSlotStyle]?
     }
 
-    static func colors(_ health: HealthModel) -> [Color] {
-        HealthPillarPalette.pillars.map { entry in pillar(health, entry.key)?.color ?? entry.color }
+    static func input(_ health: HealthModel) -> Input {
+        if health.usesRing {
+            return Input(values: health.ring.map(\.fill), colors: health.ring.map(\.color),
+                         arcs: health.ring.map(\.arc), styles: health.ring.map(\.ringStyle))
+        }
+        let values = HealthPillarPalette.legacyOrder.map { key in legacyPillar(health, key)?.score }
+        let colors = HealthPillarPalette.legacyPillars.map { entry in legacyPillar(health, entry.key)?.color ?? entry.color }
+        return Input(values: values, colors: colors, arcs: nil, styles: nil)
     }
 
-    private static func pillar(_ health: HealthModel, _ key: String) -> HealthPillar? {
+    private static func legacyPillar(_ health: HealthModel, _ key: String) -> HealthPillar? {
         health.pillars.first { HealthPillar.canonical($0.key, $0.label) == key }
     }
 }
@@ -29,25 +41,26 @@ struct HealthRingView: View {
     var lineWidth: CGFloat = 11
 
     var body: some View {
+        let input = HealthRing.input(health)
         ZStack {
-            HealthSegmentRing(values: HealthRing.values(health), colors: HealthRing.colors(health),
+            HealthSegmentRing(values: input.values, colors: input.colors, arcs: input.arcs, styles: input.styles,
                               radius: (size - lineWidth) / 2, lineWidth: lineWidth, track: .neutral)
             VStack(spacing: 0) {
-                Text(BIOSFormat.number(health.score))
+                Text(health.score == nil && health.usesRing ? "–" : BIOSFormat.number(health.score))
                     .font(.system(size: size * 0.36, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                     .minimumScaleFactor(0.6)
                     .lineLimit(1)
-                    .foregroundStyle(BIOSTheme.text1)
-                Text(health.levelWord)
+                    .foregroundStyle(health.score == nil ? BIOSTheme.text3 : BIOSTheme.text1)
+                Text(health.score == nil && health.usesRing ? "kein Wert" : health.levelWord)
                     .font(.system(size: size * 0.11, weight: .semibold))
-                    .foregroundStyle(health.levelColor)
+                    .foregroundStyle(health.score == nil ? BIOSTheme.text3 : health.levelColor)
             }
             .frame(width: size * 0.62)
         }
         .frame(width: size, height: size)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Gesundheits-Score \(BIOSFormat.number(health.score)) von 100, \(health.levelWord)")
+        .accessibilityLabel(health.scoreAccessibilityText)
     }
 }
 
@@ -69,6 +82,65 @@ struct HealthDeltaPill: View {
             .padding(.vertical, 6)
             .background(BIOSTheme.accent.opacity(0.14), in: Capsule())
             .accessibilityElement(children: .combine)
+        }
+    }
+}
+
+/// Formula 4 cap below the score: `cap.text`, then `cap.lift` in a calm
+/// smaller line. Nothing when the cap does not apply.
+struct HealthCapBlock: View {
+    let text: String?
+    let lift: String?
+
+    var body: some View {
+        if text != nil || lift != nil {
+            VStack(alignment: .leading, spacing: 4) {
+                if let text {
+                    Text(text)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(BIOSTheme.text1)
+                        .monospacedDigit()
+                }
+                if let lift {
+                    Text(lift)
+                        .font(.caption)
+                        .foregroundStyle(BIOSTheme.text3)
+                        .monospacedDigit()
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityElement(children: .combine)
+        }
+    }
+}
+
+/// Formula 4 chips (`abzug`, `stand`, `alkohol`) as calm grey capsules.
+struct HealthChipsRow: View {
+    let chips: [HealthChip]
+
+    var body: some View {
+        if !chips.isEmpty {
+            FlowLayout(spacing: 6, lineSpacing: 6) {
+                ForEach(chips) { chip in
+                    HStack(spacing: 4) {
+                        Image(systemName: chip.symbol)
+                            .font(.caption2.weight(.semibold))
+                        Text(chip.text)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
+                    }
+                    .font(.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(BIOSTheme.text2)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(Color.white.opacity(0.07)))
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(chip.text)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
@@ -96,12 +168,18 @@ struct HealthScoreCard: View {
                         Text(health.cardHeadline)
                             .font(.headline)
                             .fixedSize(horizontal: false, vertical: true)
+                        if health.usesRing, health.score == nil, let reason = health.scoreReason {
+                            Text(reason)
+                                .font(.caption)
+                                .foregroundStyle(BIOSTheme.text2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                         Text(health.freshnessText)
                             .font(.caption)
                             .foregroundStyle(BIOSTheme.text2)
                             .fixedSize(horizontal: false, vertical: true)
-                        if let capLine = health.capLine {
-                            // Formula 2: the score is capped (Infekt, Frühzeichen, Fieber).
+                        if !health.usesRing, let capLine = health.capLine {
+                            // Formula 2 and 3: the score is capped (Infekt, Frühzeichen, Fieber).
                             Text(capLine)
                                 .font(.caption)
                                 .foregroundStyle(BIOSTheme.text3)
@@ -111,27 +189,20 @@ struct HealthScoreCard: View {
                     }
                     Spacer(minLength: 0)
                 }
+                if health.usesRing {
+                    HealthCapBlock(text: health.capLine, lift: health.capLift)
+                    HealthChipsRow(chips: health.chips)
+                }
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8, alignment: .leading), count: 3),
                           alignment: .leading, spacing: 12) {
-                    ForEach(health.pillars) { pillar in
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 5) {
-                                Circle().fill(pillar.color).frame(width: 7, height: 7)
-                                Text(pillar.label)
-                                    .font(.caption)
-                                    .foregroundStyle(BIOSTheme.text2)
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.8)
-                            }
-                            Text(BIOSFormat.number(pillar.score))
-                                .font(.title2.weight(.semibold))
-                                .monospacedDigit()
-                                .padding(.leading, 12)
+                    if health.usesRing {
+                        ForEach(health.ring) { segment in
+                            HealthSegmentCell(segment: segment)
                         }
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(pillar.isBackground
-                            ? "\(pillar.label) \(BIOSFormat.number(pillar.score)), im Hintergrund, nicht im Ring"
-                            : "\(pillar.label) \(BIOSFormat.number(pillar.score))")
+                    } else {
+                        ForEach(health.pillars) { pillar in
+                            LegacyPillarCell(pillar: pillar)
+                        }
                     }
                 }
             }
@@ -140,8 +211,77 @@ struct HealthScoreCard: View {
         }
         .buttonStyle(CardButtonStyle())
         .accessibilityHint(health.hasBackgroundPillar
-            ? "Öffnet die sechs Säulen im Ring, dazu Labor im Hintergrund"
-            : "Öffnet die sechs Säulen")
+            ? "Öffnet die sechs Bereiche, dazu Labor im Hintergrund"
+            : "Öffnet die sechs Bereiche")
+    }
+}
+
+/// Grid cell of a formula 4 segment: dot, label, value or short status
+/// (Pause, nicht erfasst, keine Daten); Labor with its "Stand".
+struct HealthSegmentCell: View {
+    let segment: HealthSegment
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 5) {
+                Circle().fill(segment.displayColor).frame(width: 7, height: 7)
+                Text(segment.label)
+                    .font(.caption)
+                    .foregroundStyle(BIOSTheme.text2)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            if segment.fill != nil {
+                Text(segment.shortValue)
+                    .font(.title2.weight(.semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(segment.ringStyle == .faded ? BIOSTheme.text2 : BIOSTheme.text1)
+                    .padding(.leading, 12)
+            } else {
+                Text(segment.shortValue)
+                    .font(.subheadline)
+                    .foregroundStyle(BIOSTheme.text3)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .padding(.leading, 12)
+                    .padding(.vertical, 4)
+            }
+            if segment.isLabor, let stand = segment.standLabel {
+                Text(stand)
+                    .font(.caption2)
+                    .monospacedDigit()
+                    .foregroundStyle(BIOSTheme.text3)
+                    .padding(.leading, 12)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(segment.accessibilityText)
+    }
+}
+
+/// Grid cell of an old server's pillar (formula 1 to 3).
+struct LegacyPillarCell: View {
+    let pillar: HealthPillar
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 5) {
+                Circle().fill(pillar.color).frame(width: 7, height: 7)
+                Text(pillar.label)
+                    .font(.caption)
+                    .foregroundStyle(BIOSTheme.text2)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            Text(BIOSFormat.number(pillar.score))
+                .font(.title2.weight(.semibold))
+                .monospacedDigit()
+                .padding(.leading, 12)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(pillar.isBackground
+            ? "\(pillar.label) \(BIOSFormat.number(pillar.score)), im Hintergrund, nicht im Ring"
+            : "\(pillar.label) \(BIOSFormat.number(pillar.score))")
     }
 }
 
@@ -469,8 +609,8 @@ struct HealthDetailView: View {
             LazyVStack(alignment: .leading, spacing: 14) {
                 StoreStatusBanner()
                 Text(health?.hasBackgroundPillar == true
-                     ? "Sechs Säulen im Ring, dazu Labor im Hintergrund"
-                     : "Deine sechs Säulen")
+                     ? "Sechs Bereiche im Ring, dazu Labor im Hintergrund"
+                     : "Deine sechs Bereiche")
                     .font(.title3)
                     .foregroundStyle(BIOSTheme.text2)
                     .padding(.horizontal, 4)
@@ -494,34 +634,10 @@ struct HealthDetailView: View {
                     .foregroundStyle(BIOSTheme.text1)
                     .padding(.horizontal, 4)
 
-                    if let details = scoreDetails(health) {
-                        // Formula 2: cap reason, value before the cap, weakest-link deduction.
-                        Text(details)
-                            .font(.footnote)
-                            .foregroundStyle(BIOSTheme.text2)
-                            .monospacedDigit()
-                            .padding(.horizontal, 4)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    VStack(spacing: 0) {
-                        ForEach(Array(health.pillars.enumerated()), id: \.element.id) { entry in
-                            VStack(alignment: .leading, spacing: 0) {
-                                PillarRow(pillar: entry.element)
-                                PillarExtras(pillar: entry.element)
-                            }
-                            .overlay(alignment: .top) {
-                                if entry.offset > 0 {
-                                    Rectangle().fill(BIOSTheme.separator).frame(height: 0.5)
-                                }
-                            }
-                        }
-                    }
-                    .biosCard()
-
-                    if !health.dropped.isEmpty {
-                        NoteText(text: "Ohne Wertung: " + health.dropped.joined(separator: ", ") + ". Die übrigen Säulen zählen anteilig.")
+                    if health.usesRing {
+                        segmentSection(health)
+                    } else {
+                        legacySection(health)
                     }
                 } else {
                     NotEvaluableBox(title: "Noch kein Gesundheits-Score", text: "Der Server liefert den Score noch nicht.")
@@ -530,13 +646,96 @@ struct HealthDetailView: View {
                 RangePicker(days: $days)
                 MetricChartCard(kind: .healthScore, days: days)
 
-                NoteText(text: "Beobachtung, keine Diagnose. Der Score fasst sechs Säulen im Ring gegen deine eigene Baseline zusammen, dazu Labor als Hintergrundfaktor (bestätigte Laborwerte der letzten 12 Monate, ohne Ring-Segment). Eine Warnung einzelner Checks bleibt davon unberührt.")
+                NoteText(text: noteText(health))
             }
             .padding(.horizontal, 16)
             .padding(.top, 8)
             .padding(.bottom, 24)
         }
         .biosPageBackground()
+    }
+
+    /// Formula 4: cap, chips, the six segments with their details.
+    @ViewBuilder
+    private func segmentSection(_ health: HealthModel) -> some View {
+        HealthCapBlock(text: health.capTextForDetail, lift: health.capLift)
+            .padding(.horizontal, 4)
+        HealthChipsRow(chips: health.chips)
+            .padding(.horizontal, 4)
+        if health.score == nil, let reason = health.scoreReason, reason != health.secondText {
+            Text(reason)
+                .font(.footnote)
+                .foregroundStyle(BIOSTheme.text2)
+                .padding(.horizontal, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+
+        VStack(spacing: 0) {
+            ForEach(Array(health.ring.enumerated()), id: \.element.id) { entry in
+                VStack(alignment: .leading, spacing: 0) {
+                    HealthSegmentRow(segment: entry.element)
+                    SegmentExtras(segment: entry.element)
+                }
+                .overlay(alignment: .top) {
+                    if entry.offset > 0 {
+                        Rectangle().fill(BIOSTheme.separator).frame(height: 0.5)
+                    }
+                }
+            }
+        }
+        .biosCard()
+
+        if !health.segmentsWithoutValue.isEmpty {
+            NoteText(text: "Ohne Wert: " + health.segmentsWithoutValue.joined(separator: ", ") + ". Die übrigen Bereiche zählen anteilig.")
+        }
+    }
+
+    /// Old servers (formula 1 to 3): cap line, pillar list, dropped pillars.
+    @ViewBuilder
+    private func legacySection(_ health: HealthModel) -> some View {
+        if let details = scoreDetails(health) {
+            // Formula 2: cap reason, value before the cap, weakest-link deduction.
+            Text(details)
+                .font(.footnote)
+                .foregroundStyle(BIOSTheme.text2)
+                .monospacedDigit()
+                .padding(.horizontal, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+
+        VStack(spacing: 0) {
+            ForEach(Array(health.pillars.enumerated()), id: \.element.id) { entry in
+                VStack(alignment: .leading, spacing: 0) {
+                    PillarRow(pillar: entry.element)
+                    PillarExtras(pillar: entry.element)
+                }
+                .overlay(alignment: .top) {
+                    if entry.offset > 0 {
+                        Rectangle().fill(BIOSTheme.separator).frame(height: 0.5)
+                    }
+                }
+            }
+        }
+        .biosCard()
+
+        if !health.dropped.isEmpty {
+            NoteText(text: "Ohne Wertung: " + health.dropped.joined(separator: ", ") + ". Die übrigen Bereiche zählen anteilig.")
+        }
+    }
+
+    private func noteText(_ health: HealthModel?) -> String {
+        guard let health, health.usesRing else {
+            return "Beobachtung, keine Diagnose. Der Score fasst sechs Bereiche im Ring gegen deine eigene Baseline zusammen, dazu Labor als Hintergrundfaktor (bestätigte Laborwerte der letzten 12 Monate, ohne Ring-Segment). Eine Warnung einzelner Checks bleibt davon unberührt."
+        }
+        let labels = health.ring.map(\.label)
+        let list = labels.count > 1
+            ? labels.dropLast().joined(separator: ", ") + " und " + (labels.last ?? "")
+            : labels.joined()
+        var text = "Beobachtung, keine Diagnose. Der Score fasst sechs Bereiche gegen deine eigene Baseline zusammen: \(list). Die Länge eines Bogens zeigt sein Gewicht, die Füllung den Wert. Ein Infekt wirkt über den Deckel, nicht über einen eigenen Bereich. Eine Warnung einzelner Checks bleibt davon unberührt."
+        if let levels = health.levelsText { text += " " + levels }
+        return text
     }
 
     /// "Gedeckelt: Infektmuster Tag 4, ohne Deckel 65. Abzug 6: Schlaf 24 unter 40."
@@ -560,6 +759,66 @@ struct HealthDetailView: View {
     }
 }
 
+/// Formula 4 segment in the detail: label, trend, value or status, bar,
+/// status line (Pause wegen Infekt, verblasst), reason, share and week delta.
+struct HealthSegmentRow: View {
+    let segment: HealthSegment
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Circle().fill(segment.displayColor).frame(width: 8, height: 8)
+                Text(segment.label)
+                    .font(.title3.weight(.semibold))
+                Spacer()
+                if segment.fill != nil, let symbol = segment.trendSymbol {
+                    Image(systemName: symbol)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(segment.displayColor)
+                }
+                Text(segment.shortValue)
+                    .font(segment.fill == nil ? Font.subheadline : Font.title3.weight(.semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(segment.fill == nil ? BIOSTheme.text2 : segment.displayColor)
+            }
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.white.opacity(segment.fill == nil ? 0.06 : 0.10))
+                    if let fill = segment.fill {
+                        Capsule()
+                            .fill(segment.displayColor)
+                            .frame(width: proxy.size.width * CGFloat(Swift.max(0, Swift.min(1, fill / 100))))
+                    }
+                }
+            }
+            .frame(height: 5)
+            if let status = segment.statusText, status != segment.shortValue {
+                Text(status)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(BIOSTheme.text3)
+            }
+            if let reason = segment.reason {
+                Text(reason)
+                    .font(.subheadline)
+                    .foregroundStyle(BIOSTheme.text2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let meta = segment.metaLine {
+                Text(meta)
+                    .font(.caption2)
+                    .monospacedDigit()
+                    .foregroundStyle(BIOSTheme.text3)
+            }
+        }
+        .padding(.vertical, 12)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel([segment.accessibilityText, segment.reason, segment.metaLine]
+            .compactMap { $0 }
+            .joined(separator: ". "))
+    }
+}
+
+/// Legacy pillar in the detail (old servers).
 struct PillarRow: View {
     let pillar: HealthPillar
 
