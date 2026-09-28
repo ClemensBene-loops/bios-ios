@@ -118,6 +118,8 @@ struct DashboardModel {
     let bodymap: BodyMapSummaryModel?
     /// Last strength training (`training.strength`, V3c, optional; nil hides the line).
     let strength: StrengthModel?
+    /// Labor block (`labs`, V4, optional; the Heute card shows only when something is open).
+    let labs: DashboardLabsModel?
 
     /// Major schema version this app understands.
     static let supportedSchema = 1
@@ -136,6 +138,7 @@ struct DashboardModel {
         health = HealthModel(json: json.obj("health"))
         vitals = json.obj("vitals").map { DashboardVitalsModel(json: $0) }
         bodymap = json.obj("bodymap").map { BodyMapSummaryModel(json: $0) }
+        labs = json.obj("labs").map { DashboardLabsModel(json: $0) }
 
         let tiles = json.obj("tiles")
         strength = StrengthModel(json: json.obj("training")?.obj("strength")

@@ -19,9 +19,13 @@ targets:
       # ActivityAttributes, Live Activity intents, brand assets: compiled into
       # the app and the widget extension.
       - path: Shared
+      # Lab upload (POST /v1/labs/documents, JPEG conversion): app and share extension.
+      - path: SharedUpload
     dependencies:
       # Builds and embeds BIOSWidgets.appex in BIOS.app/PlugIns.
       - target: BIOSWidgets
+      # Builds and embeds BIOSShare.appex (share sheet "BIOS") in BIOS.app/PlugIns.
+      - target: BIOSShare
     # Signing defaults (team, style) and APS_ENVIRONMENT live in the xcconfigs.
     # Settings below would override the xcconfig, so signing is kept out of here.
     configFiles:
@@ -76,12 +80,46 @@ targets:
         APPLICATION_EXTENSION_API_ONLY: YES
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"
 
+  # Share extension: "Teilen" > BIOS sends one PDF or image to
+  # POST /v1/labs/documents. Own App ID at.bene.bios.share with its own App Store
+  # profile (fastlane, workflows 2 and 3), no entitlements, no App Group: it
+  # reads the server config from its own Info.plist (workflow 4 injects it).
+  BIOSShare:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: BIOSShare
+      - path: SharedUpload
+      - path: Shared/AppConfig.swift
+    configFiles:
+      Debug: Config/Debug.xcconfig
+      Release: Config/Release.xcconfig
+    settings:
+      base:
+        PRODUCT_NAME: BIOSShare
+        PRODUCT_BUNDLE_IDENTIFIER: at.bene.bios.share
+        # Must equal the app (App Store validation); agvtool sets the build
+        # number of all targets in workflow 4.
+        MARKETING_VERSION: "2.0"
+        CURRENT_PROJECT_VERSION: "1"
+        VERSIONING_SYSTEM: apple-generic
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: BIOSShare/Info.plist
+        TARGETED_DEVICE_FAMILY: "1"
+        SUPPORTS_MACCATALYST: NO
+        SWIFT_VERSION: "5.0"
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"
+
 schemes:
   BIOS:
     build:
       targets:
         BIOS: all
         BIOSWidgets: all
+        BIOSShare: all
     run:
       config: Debug
     archive:

@@ -2,8 +2,9 @@ name: 2. Add Identifiers
 run-name: Add Identifiers (${{ github.ref_name }})
 
 # Apple-side change: registers the App ID at.bene.bios (if missing) and enables
-# the Push Notifications capability, and registers the App ID
-# at.bene.bios.widgets of the widget extension (Live Activity, no capability).
+# the Push Notifications capability, and registers the App IDs
+# at.bene.bios.widgets of the widget extension (Live Activity, no capability)
+# and at.bene.bios.share of the share extension (Labor import, no capability).
 # Idempotent. Manual only.
 on:
   workflow_dispatch:

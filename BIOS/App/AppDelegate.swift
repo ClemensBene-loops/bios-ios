@@ -29,7 +29,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         return true
     }
 
-    /// Categories the server sets as `aps.category`. No custom actions except
+    /// Categories the server sets as `aps.category` (incl. `LAB_REVIEW`). No custom actions except
     /// `MOVE_NUDGE` (below): a tap opens the app. With hidden previews the title (emoji + verdict) stays
     /// visible; grouped notifications get a German summary line.
     private func registerNotificationCategories() {
@@ -40,6 +40,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
             ("OUTLOOK_WEEKLY", "%u weitere Ausblick-Meldungen"),
             // Heartbeat warnings/Entwarnung and the test push (thread "system", tab Mehr)
             ("SYSTEM_ALERT", "%u weitere System-Meldungen"),
+            // Labor: extracted values wait for the review (thread "labs", opens Labor > Zu prüfen)
+            ("LAB_REVIEW", "%u weitere Befunde"),
         ]
         var categories = Set<UNNotificationCategory>()
         for definition in definitions {

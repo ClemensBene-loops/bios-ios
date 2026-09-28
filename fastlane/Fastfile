@@ -4,7 +4,7 @@
 # SAFETY: The Match-Secrets repo and its App Store distribution certificate are
 # shared with Loop. This file intentionally contains NO match_nuke and NO
 # certificate renewal logic: revoking that certificate would break Loop.
-# BIOS only ever adds its own App Store provisioning profiles (app + widgets).
+# BIOS only ever adds its own App Store provisioning profiles (app, widgets, share).
 #
 # Required env (GitHub org secrets): TEAMID, GH_PAT, MATCH_PASSWORD,
 # FASTLANE_KEY_ID, FASTLANE_ISSUER_ID, FASTLANE_KEY.
@@ -21,7 +21,18 @@ APP_NAME = "BIOS"
 WIDGETS_IDENTIFIER = "at.bene.bios.widgets"
 WIDGETS_NAME = "BIOS Widgets"
 WIDGETS_TARGET = "BIOSWidgets"
-ALL_IDENTIFIERS = [APP_IDENTIFIER, WIDGETS_IDENTIFIER].freeze
+# Share extension (Labor import from the share sheet). Own App ID, no
+# capability, no App Group: it reads the server config from its own Info.plist.
+SHARE_IDENTIFIER = "at.bene.bios.share"
+SHARE_NAME = "BIOS Share"
+SHARE_TARGET = "BIOSShare"
+ALL_IDENTIFIERS = [APP_IDENTIFIER, WIDGETS_IDENTIFIER, SHARE_IDENTIFIER].freeze
+# Target -> bundle ID for manual signing in the build lane.
+TARGET_IDENTIFIERS = {
+  "BIOS" => APP_IDENTIFIER,
+  WIDGETS_TARGET => WIDGETS_IDENTIFIER,
+  SHARE_TARGET => SHARE_IDENTIFIER
+}.freeze
 MATCH_GIT_URL = "https://github.com/ClemensBene-loops/Match-Secrets.git"
 
 TEAMID = ENV["TEAMID"]
@@ -70,11 +81,12 @@ platform :ios do
       UI.important("Bundle ID #{APP_IDENTIFIER} is not registered yet (run 2. Add Identifiers).")
     end
 
-    widgets_id = Spaceship::ConnectAPI::BundleId.find(WIDGETS_IDENTIFIER)
-    if widgets_id
-      UI.success("Bundle ID #{WIDGETS_IDENTIFIER} is registered.")
-    else
-      UI.important("Bundle ID #{WIDGETS_IDENTIFIER} is not registered yet (run 2. Add Identifiers).")
+    [WIDGETS_IDENTIFIER, SHARE_IDENTIFIER].each do |identifier|
+      if Spaceship::ConnectAPI::BundleId.find(identifier)
+        UI.success("Bundle ID #{identifier} is registered.")
+      else
+        UI.important("Bundle ID #{identifier} is not registered yet (run 2. Add Identifiers, then 3. Create Certificates).")
+      end
     end
 
     app = Spaceship::ConnectAPI::App.find(APP_IDENTIFIER)
@@ -106,7 +118,7 @@ platform :ios do
 
   # --- 2. identifiers (creates the App ID at Apple) --------------------------
 
-  desc "Register bundle IDs at.bene.bios (Push Notifications) and at.bene.bios.widgets (if missing)"
+  desc "Register bundle IDs at.bene.bios (Push Notifications), at.bene.bios.widgets and at.bene.bios.share (if missing)"
   lane :identifiers do
     bios_api_key
 
@@ -131,24 +143,26 @@ platform :ios do
     end
     UI.success("Bundle ID #{APP_IDENTIFIER} ready.")
 
-    # Widget extension: plain App ID, no capabilities.
-    widgets_id = Spaceship::ConnectAPI::BundleId.find(WIDGETS_IDENTIFIER)
-    if widgets_id
-      UI.message("Bundle ID #{WIDGETS_IDENTIFIER} already exists (#{widgets_id.id}).")
-    else
-      UI.message("Creating bundle ID #{WIDGETS_IDENTIFIER} ...")
-      Spaceship::ConnectAPI::BundleId.create(
-        name: WIDGETS_NAME,
-        identifier: WIDGETS_IDENTIFIER,
-        platform: "IOS"
-      )
+    # Widget extension and share extension: plain App IDs, no capabilities.
+    { WIDGETS_IDENTIFIER => WIDGETS_NAME, SHARE_IDENTIFIER => SHARE_NAME }.each do |identifier, name|
+      existing_id = Spaceship::ConnectAPI::BundleId.find(identifier)
+      if existing_id
+        UI.message("Bundle ID #{identifier} already exists (#{existing_id.id}).")
+      else
+        UI.message("Creating bundle ID #{identifier} ...")
+        Spaceship::ConnectAPI::BundleId.create(
+          name: name,
+          identifier: identifier,
+          platform: "IOS"
+        )
+      end
+      UI.success("Bundle ID #{identifier} ready.")
     end
-    UI.success("Bundle ID #{WIDGETS_IDENTIFIER} ready.")
   end
 
   # --- 3. certs (creates the App Store profile, reuses the certificate) ------
 
-  desc "Create the App Store profiles for at.bene.bios and at.bene.bios.widgets, reusing the existing distribution certificate"
+  desc "Create the App Store profiles for at.bene.bios, at.bene.bios.widgets and at.bene.bios.share, reusing the existing distribution certificate"
   lane :certs do
     setup_ci if ENV["CI"]
     bios_api_key
@@ -160,8 +174,10 @@ platform :ios do
     unless bundle_id.get_capabilities.map(&:capability_type).include?(push_type)
       UI.user_error!("Push Notifications capability missing on #{APP_IDENTIFIER}. Run 2. Add Identifiers first.")
     end
-    unless Spaceship::ConnectAPI::BundleId.find(WIDGETS_IDENTIFIER)
-      UI.user_error!("Bundle ID #{WIDGETS_IDENTIFIER} not found. Run 2. Add Identifiers first.")
+    [WIDGETS_IDENTIFIER, SHARE_IDENTIFIER].each do |identifier|
+      unless Spaceship::ConnectAPI::BundleId.find(identifier)
+        UI.user_error!("Bundle ID #{identifier} not found. Run 2. Add Identifiers first (from the same branch).")
+      end
     end
 
     # Guard 2: the shared certificate must already be in Match-Secrets and valid.
@@ -204,18 +220,30 @@ platform :ios do
     current_build_number = previous_build_number.to_i + 1
     UI.message("Build number: #{current_build_number}")
 
+    # Every extension needs its App ID and profile first. A missing one (e.g.
+    # at.bene.bios.share before workflows 2 and 3 ran) stops here with a clear
+    # message instead of an opaque match or signing error.
+    missing_ids = ALL_IDENTIFIERS.reject { |identifier| Spaceship::ConnectAPI::BundleId.find(identifier) }
+    unless missing_ids.empty?
+      UI.user_error!("App ID(s) #{missing_ids.join(", ")} not registered at Apple. Run workflow 2. Add Identifiers, then 3. Create Certificates (both from this branch), then this build again.")
+    end
+
     increment_build_number(
       xcodeproj: PROJECT,
       build_number: current_build_number
     )
 
-    match(
-      type: "appstore",
-      readonly: true,
-      git_url: MATCH_GIT_URL,
-      git_basic_authorization: match_auth,
-      app_identifier: ALL_IDENTIFIERS
-    )
+    begin
+      match(
+        type: "appstore",
+        readonly: true,
+        git_url: MATCH_GIT_URL,
+        git_basic_authorization: match_auth,
+        app_identifier: ALL_IDENTIFIERS
+      )
+    rescue => e
+      UI.user_error!("match found no App Store profile for one of #{ALL_IDENTIFIERS.join(", ")} (#{e.message.lines.first&.strip}). Run workflow 3. Create Certificates from this branch, then this build again.")
+    end
 
     mapping = Actions.lane_context[SharedValues::MATCH_PROVISIONING_PROFILE_MAPPING] || {}
     ALL_IDENTIFIERS.each do |identifier|
@@ -223,7 +251,7 @@ platform :ios do
     end
 
     # Manual signing per target with its own App Store profile.
-    { "BIOS" => APP_IDENTIFIER, WIDGETS_TARGET => WIDGETS_IDENTIFIER }.each do |target, identifier|
+    TARGET_IDENTIFIERS.each do |target, identifier|
       update_code_signing_settings(
         path: PROJECT,
         use_automatic_signing: false,

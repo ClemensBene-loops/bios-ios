@@ -61,5 +61,9 @@
 	     to the server so the right APNs host (sandbox/production) is used. -->
 	<key>BIOSAPSEnvironment</key>
 	<string>$(APS_ENVIRONMENT)</string>
+	<!-- Labor tab: photograph a lab report ("+" > "Foto aufnehmen"). The photo
+	     library picker (PhotosPicker) needs no permission. -->
+	<key>NSCameraUsageDescription</key>
+	<string>BIOS nutzt die Kamera, um einen Befund zu fotografieren und an deinen BIOS-Server zu senden.</string>
 </dict>
 </plist>

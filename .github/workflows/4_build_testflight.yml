@@ -2,7 +2,9 @@ name: 4. Build BIOS
 run-name: Build BIOS (${{ github.ref_name }}${{ github.event_name == 'schedule' && ', monthly' || '' }})
 
 # Builds a signed App Store IPA and uploads it to TestFlight. Needs 2 + 3 and
-# an App Store Connect app record for at.bene.bios.
+# an App Store Connect app record for at.bene.bios. Since the share extension
+# (at.bene.bios.share) exists, 2 and 3 must have run once from a branch that
+# contains it; otherwise the build lane stops early with a clear message.
 # Triggers: manual ("Run workflow", any branch) and monthly on the 1st at 04:00
 # UTC, so a fresh build replaces the one that expires after 90 days. Scheduled
 # runs always use the default branch (main): the schedule only takes effect once
@@ -85,15 +87,17 @@ jobs:
           xcodegen generate
 
       # Optional build-time config (GitHub secrets, may be empty). Written into
-      # the runner's copies of Config/Info.plist (app) and BIOSWidgets/Info.plist
-      # (lock screen widgets, they fetch the server themselves); never committed.
+      # the runner's copies of Config/Info.plist (app), BIOSWidgets/Info.plist
+      # (lock screen widgets, they fetch the server themselves) and
+      # BIOSShare/Info.plist (share extension, uploads lab documents itself);
+      # never committed.
       - name: Inject app config
         env:
           BIOS_API_BASE_URL: ${{ secrets.BIOS_API_BASE_URL }}
           BIOS_API_SECRET: ${{ secrets.BIOS_API_SECRET }}
         run: |
           set -eo pipefail
-          for PLIST in Config/Info.plist BIOSWidgets/Info.plist; do
+          for PLIST in Config/Info.plist BIOSWidgets/Info.plist BIOSShare/Info.plist; do
             if [ -n "$BIOS_API_BASE_URL" ]; then
               plutil -replace BIOSAPIBaseURL -string "$BIOS_API_BASE_URL" "$PLIST"
               echo "BIOS_API_BASE_URL injected into $PLIST."
@@ -159,6 +163,14 @@ jobs:
           fi
           codesign --verify --strict "$APPEX"
           echo "BIOSWidgets.appex embedded and signed"
+          # The share extension (Labor import from the share sheet) too.
+          SHARE_APPEX="$APP/PlugIns/BIOSShare.appex"
+          if [ ! -d "$SHARE_APPEX" ]; then
+            echo "::error::BIOSShare.appex is missing in the IPA."
+            exit 1
+          fi
+          codesign --verify --strict "$SHARE_APPEX"
+          echo "BIOSShare.appex embedded and signed"
 
       - name: Fastlane upload to TestFlight
         run: bundle exec fastlane release

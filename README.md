@@ -17,7 +17,7 @@ repo (`api/server.py`, `api/dashboard.py`, `api/series.py`, `api/intake.py`,
 |---|---|
 | Display name | BIOS |
 | App Store Connect record | BIOS Health |
-| Bundle ID | `at.bene.bios`, widget extension `at.bene.bios.widgets` (lock screen widgets, Live Activity) |
+| Bundle ID | `at.bene.bios`, widget extension `at.bene.bios.widgets` (lock screen widgets, Live Activity), share extension `at.bene.bios.share` (Labor import) |
 | Team ID | `D457V2W8RG` (not a secret, also in `Config/Base.xcconfig`) |
 | Minimum iOS | 17.0, iPhone only, portrait |
 | Version | `MARKETING_VERSION` 2.0 (`project.yml`), build number = latest TestFlight build + 1 |
@@ -26,8 +26,9 @@ repo (`api/server.py`, `api/dashboard.py`, `api/series.py`, `api/intake.py`,
 Status (2026-09-26): v2 lives on branch `v2-dashboard` (TestFlight builds `2.0 (3)`
 and later: charts, infection score, blood pressure, quick log, Gesundheits-Score,
 Live Activity, Körperkarte). `main` still holds v1 (build `1.0 (2)`, PR #1) until
-`v2-dashboard` is merged. v3 work (Bewegungs-Stupser, later the Labor tab) lives on
-branch `v3`, cut from `v2-dashboard`.
+`v2-dashboard` is merged. v3 work (Bewegungs-Stupser, Labor tab with the share
+extension) lives on branch `v3`, cut from `v2-dashboard`. The share extension needs
+workflows 2 and 3 once before the next build (see "Share extension" below).
 
 This repo is **public**: no secrets, no server URL, no IPA and no personal health
 data are ever committed or uploaded as workflow artifacts. Sample data in the code
@@ -35,9 +36,9 @@ is invented.
 
 ## What the app does
 
-Four tabs (`TabView`), dark mode first, SF Symbols, colors always paired with a
-symbol or text, Dynamic Type and VoiceOver labels, no third-party dependencies
-(Swift Charts is Apple's).
+Five tabs (`TabView`: Heute, Körper, Umwelt, Labor, Mehr), dark mode first, SF
+Symbols, colors always paired with a symbol or text, Dynamic Type and VoiceOver
+labels, no third-party dependencies (Swift Charts and PDFKit are Apple's).
 
 - **Heute**: Gesundheits-Score card (see below), Körperkarte card, compact
   Infekt-Check (score, status pill, 7-day sparkline, temperature) and "Deine
@@ -57,6 +58,8 @@ symbol or text, Dynamic Type and VoiceOver labels, no third-party dependencies
   detail screens.
 - **Umwelt**: viruses in wastewater (Wien, Germany) with fine trend arrows, pollen
   forecast for the next 4 days, allergy block, season hints.
+- **Labor**: lab values and documents (see "Labor" below), segment "Werte | Befunde",
+  import via "+" or the share sheet.
 - **Mehr**: push status (permission, APNs registration, token upload, last push),
   "Test-Push senden", Bewegungs-Stupser (see below), data freshness per source,
   server hints, alcohol calendar, version and push environment.
@@ -254,13 +257,114 @@ category, answers the buttons and edits the settings. **Default off.**
   (`last_at`, `days_since`, `note`), a calm card under the tiles says "Letztes
   Krafttraining vor N Tagen" with the server's note; absent means no line.
 
+### Labor (lab values and documents)
+
+Fifth tab "Labor" (`BIOS/Views/Labor/`, store `BIOS/App/LabStore.swift`, models
+`BIOS/Models/LabModels.swift`). The server does everything (storage, extraction with
+the Claude API, marker catalog, unit conversion, due intervals); the app shows,
+imports and runs the review step. Contract: `docs/API_v1.md` of the BIOS repo,
+section "Labor", fixtures `docs/fixtures/labs_*.json` (invented values). Display
+and decision support, never a diagnosis. **Lab values never color the body map**
+(an old value would color it for months): a marker only links neutrally to its
+region, and a systems region with lab values shows a neutral "Laborwerte im Tab
+Labor" link in its sheet.
+
+- **Werte** (`GET /v1/labs`): "Fällig" card from `due` (faellig, unbekannt, bald,
+  ok; "seit 3 Wochen", "noch nie", "in 12 Tagen", date), summary chips (im Bereich,
+  außerhalb Ref., ohne Referenz, zu prüfen), groups in server order with marker
+  rows: name, date and lab reference ("Ref. 4,0 bis 6,0", spirometry "z −0,62"),
+  value with unit, tag hoch/niedrig/auffällig, reference bar (green band = the lab's
+  range, dot = value, white tick = therapy goal from `target`), mini sparkline.
+  Markers never measured are simply absent. Without values: empty state with an
+  explanation and the import button. Out of range is calm yellow, never red.
+- **Marker detail** (`GET /v1/labs/markers/{id}`): big value, reference bar with
+  scale, reference and goal text (HbA1c goal `< 7,0 %`: "über Ziel"), the printed
+  value when the server converted units, history chart (Swift Charts: lab line,
+  reference band, dashed goal line, for HbA1c the GMI of the 90 CGM days before
+  each lab date as a dashed blue line), "Neben Tagesdaten" (GMI today from `links`,
+  difference to the lab, time in range, coverage or the reason it is not
+  evaluable), neutral body map link (switches to Körper, systems layer, opens the
+  region sheet; `Router.showBodyMapRegion`), table of measurements with the source
+  document (tap opens it), reference ranges when labs changed.
+- **Befunde** (`GET /v1/labs/documents`): review banner "N Werte erkannt, bitte
+  prüfen" (one document opens directly, several open the list), waiting and error
+  lines, filter chips by kind, timeline grouped by month, expandable cards (values
+  with tags, or the summary points of a letter), status badges: "wird ausgewertet"
+  (with `status_reason`), "zu prüfen", "Fehler" (reason, "Erneut versuchen" =
+  `PATCH {"retry": true}`, "Verwerfen"), "bestätigt". The list polls every 15 s
+  while a document waits (at most 10 min, only while the tab is visible).
+- **Review screen** (`GET/PATCH/DELETE /v1/labs/documents/{id}`): steps
+  Hochgeladen, Erkannt, Bestätigt; preview of the original (`.../file`, PDFKit or
+  image, full screen, memory only); editable kind (catalog kinds), date, title,
+  source; values with editable value (decimal comma) and unit, yellow highlight
+  with the review reasons, page and snippet; discard per value; "N Werte
+  übernehmen" = one PATCH with the changed fields, discards and `confirm: true`;
+  "Verwerfen" = DELETE after a confirmation. A confirmed document opens the same
+  screen with "Änderungen speichern". 409/422 texts from the server are shown calmly.
+- **Import in the app**: "+" > "PDF oder Bild aus Dateien", "Foto auswählen"
+  (PhotosPicker, no permission), "Foto aufnehmen" (camera,
+  `NSCameraUsageDescription`). Photos and image files become JPEG (long side at
+  most 3000 px), PDFs stay PDF; > 15 MB is refused before sending. Upload:
+  `POST /v1/labs/documents` with the raw body and its content type
+  (`SharedUpload/LabUpload.swift`, own URLSession with long timeouts, progress).
+  201 = new, 200 = the same file was there ("Schon vorhanden"), 413/415/422 and
+  offline are shown as calm text. **One-time notice** before the first upload
+  (cloud extraction with Claude, stays on your server, you review every value,
+  observation not diagnosis); the flag `bios.labs.cloudNoticeAccepted` is never reset.
+- **Heute**: small "Labor" card only when `dashboard.labs` has
+  `review_documents > 0` or due items `faellig`/`bald`; tap opens the Labor tab
+  (the review list when something waits). The tab badge shows `review_documents`.
+- **Offline**: overview, documents, catalog, every opened marker and document are
+  cached as raw JSON (`labs`, `labs_documents`, `labs_catalog`,
+  `labs_marker_<id>`, `labs_document_<id>`); a server without the endpoints (404)
+  shows "Labor noch nicht verfügbar".
+- **Push `LAB_REVIEW`** (thread `labs`, silent, default off on the server): tap
+  opens Labor > "Zu prüfen" (`bios.tab` `labor`, `bios.detail` `labor_pruefen`).
+
+### Share extension "BIOS" (`BIOSShare`, `at.bene.bios.share`)
+
+"Teilen" > BIOS from Mail, Files, Photos or a browser sends exactly one PDF or
+image straight to `POST /v1/labs/documents` (activation rule: one attachment
+conforming to `com.adobe.pdf` or `public.image`). Minimal UI: "An BIOS senden",
+file name, progress, "Gesendet" (closes by itself), calm errors with "Erneut
+senden". Images become JPEG first (`SharedUpload/LabUploadImage.swift`). The
+extension reads `BIOSAPIBaseURL`/`BIOSAPISecret` from its own `BIOSShare/Info.plist`
+(workflow 4 injects them like for `BIOSWidgets`; empty falls back to the app's
+Info.plist via `AppConfig`). No App Group: the extension cannot read the app's
+notice flag, so the first share shows the same short note once with a "Senden"
+button (its own flag `bios.share.noticeSeen`); after that it uploads directly.
+The review happens in the app (Labor > Befunde).
+
+**Order of workflows for the share extension (once):** the new App ID and its
+profile must exist before workflow 4 can sign it. Run each from branch `v3` (or
+any branch that contains `BIOSShare`; "Use workflow from" selector):
+
+1. **2. Add Identifiers**: registers `at.bene.bios.share` (idempotent, existing IDs
+   are left alone).
+2. **3. Create Certificates**: creates the App Store profile for
+   `at.bene.bios.share` in Match-Secrets (reuses the shared certificate).
+3. **4. Build BIOS** from `v3`.
+
+If 4 runs first, the `build` lane stops before signing with "App ID(s)
+at.bene.bios.share not registered at Apple. Run workflow 2 ..., then 3 ...", and
+a missing profile fails with a match message naming workflow 3. The verify step
+of workflow 4 also checks that `BIOSShare.appex` is embedded and signed.
+
+Server side the upload route needs the larger Caddy body limit for
+`/bios/v1/labs/documents*` (`scripts/caddy_bios.snippet` in the BIOS repo);
+without it Caddy answers 413 for everything above 8 KB, which the app shows as
+"zu groß ... Proxy-Einstellung".
+
 ### Deep links from a push
 
 Every push carries `bios.tab` (`heute`, `umwelt`, `mehr`) and optionally
 `bios.detail` (`infekt`, `viren`, `pollen`; reserved `blutdruck`). `Router.target`
 resolves in this order: `bios.tab` (+ detail), `bios.detail` alone (its home tab),
 the APNs `thread-id` (`whoop` -> Heute + Infekt-Check, `outlook` -> Umwelt,
-`system` -> Mehr), the category prefix, else Heute. So older pushes without
+`system` -> Mehr), the category prefix, else Heute. Labor pushes are checked first
+(`Router.isLabPush`): `bios.tab` `labor`, `bios.detail` `labor_pruefen`, thread
+`labs` or category `LAB_*` open the Labor tab (the review list for
+`labor_pruefen`/`LAB_REVIEW`). So older pushes without
 `bios.tab` still land in the right place, and unknown values fall back instead of
 failing. There is no URL scheme; deep links come only from pushes.
 
@@ -383,6 +487,7 @@ keys in its contract test.
   push deep links), stores `DashboardStore`, `SeriesStore`, `EventStore`, `LogStores`
   (supplements, medications, offline queues), `BodyMapStore` (body map + cache),
   `NudgeStore` (Bewegungs-Stupser settings + cache, notification button queue),
+  `LabStore` (Labor: overview, documents, markers, writes, upload, polling),
   `AlcoholIntents.swift` (App Intents).
 - `BIOS/Networking/`: `APIClient.swift` (+ `APIClient+Logs.swift`; Bearer auth, retry),
   `APIModels.swift`, `DiskCache.swift` (offline cache), `JSONValue+Access.swift`.
@@ -391,10 +496,15 @@ keys in its contract test.
   number and date formats), `SampleData.swift` (invented, `#if DEBUG`).
 - `BIOS/Views/`: `RootView` (TabView), `Heute/` (hero, tiles), `KoerperView`,
   `UmweltView`, `MehrView`, `Details/`, `Charts/`, `BodyMap/` (`BodyMapShapes`
-  layout and paths, `BodyMapStyle` colors and texts, `BodyMapView`), `QuickLogViews`,
+  layout and paths, `BodyMapStyle` colors and texts, `BodyMapView`), `Labor/`
+  (tab, marker detail, documents, review, import), `QuickLogViews`,
   `AlcoholViews`, `BloodPressureViews`, `Theme`, `Components`.
 - `BIOSWidgets/`: widget extension (lock screen widgets `BIOSStatusWidget`, Live
   Activity views, `Info.plist`).
+- `BIOSShare/`: share extension (`ShareViewController`, SwiftUI sheet, `Info.plist`
+  with the activation rule and the injected server config).
+- `SharedUpload/`: compiled into the app and the share extension: `LabUpload`
+  (`POST /v1/labs/documents`, progress, calm errors), `LabUploadImage` (JPEG).
 - `Shared/`: compiled into the app and the extension: `AppConfig` (build-time
   config from Info.plist, app or extension), `BIOSActivityAttributes`
   (content state, brand colors), `HealthRing` (pillar order and colors, ring
@@ -417,15 +527,16 @@ they never run in parallel.
 |---|---|---|---|
 | 0. Compile Check | every push to a branch other than `main` (not for `**.md`, `docs/**`, `tools/**`), or manual | none | Nothing. `xcodegen generate`, then `xcodebuild build` Release and Debug for the iOS Simulator without signing. No secrets; only the build log on failure (7 days). Errors and warnings land in the job summary. |
 | 1. Validate Secrets | manual | `validate_secrets` | Nothing. Checks `GH_PAT`, that `Match-Secrets` exists and is private, the API key and that match decrypts; lists bundle ID, capabilities, app record and distribution certificates. |
-| 2. Add Identifiers | manual | `identifiers` | Registers the App ID `at.bene.bios` if missing and enables the Push Notifications capability; registers `at.bene.bios.widgets` (no capability). Idempotent. |
-| 3. Create Certificates | manual | `certs` | Creates the missing App Store provisioning profiles for `at.bene.bios` and `at.bene.bios.widgets` and stores them in `ClemensBene-loops/Match-Secrets`. **Reuses** the distribution certificate shared with Loop; never creates, renews or revokes certificates, no nuke logic. Fails if the App ID or Push is missing. |
-| 4. Build BIOS | manual (any branch) and monthly schedule | `build` + `release` | Runner `macos-26`, Xcode 26.5 (falls back to the newest installed). Generates the project, injects the app config, sets build number = latest TestFlight build + 1, signs app and extension with their match profiles, verifies the IPA has `aps-environment = production` and an embedded, signed `BIOSWidgets.appex`, uploads to TestFlight (does not wait for processing). On failure only the build log is kept (7 days); the IPA is never uploaded as an artifact because it contains `BIOS_API_SECRET`. |
+| 2. Add Identifiers | manual | `identifiers` | Registers the App ID `at.bene.bios` if missing and enables the Push Notifications capability; registers `at.bene.bios.widgets` and `at.bene.bios.share` (no capability). Idempotent. |
+| 3. Create Certificates | manual | `certs` | Creates the missing App Store provisioning profiles for `at.bene.bios`, `at.bene.bios.widgets` and `at.bene.bios.share` and stores them in `ClemensBene-loops/Match-Secrets`. **Reuses** the distribution certificate shared with Loop; never creates, renews or revokes certificates, no nuke logic. Fails if the App ID or Push is missing. |
+| 4. Build BIOS | manual (any branch) and monthly schedule | `build` + `release` | Runner `macos-26`, Xcode 26.5 (falls back to the newest installed). Generates the project, injects the app config, sets build number = latest TestFlight build + 1, signs app and extensions with their match profiles (stops early with a clear message if an App ID such as `at.bene.bios.share` is not registered yet), verifies the IPA has `aps-environment = production` and embedded, signed `BIOSWidgets.appex` and `BIOSShare.appex`, uploads to TestFlight (does not wait for processing). On failure only the build log is kept (7 days); the IPA is never uploaded as an artifact because it contains `BIOS_API_SECRET`. |
 
 The App Store Connect app record ("BIOS Health") was created once by hand in
 App Store Connect; workflow 4 needs it.
 
 Order for a fresh setup: 1, 2, 3, create the app record, 4. For a normal new
-build only 4 is needed.
+build only 4 is needed. After a new extension target (so far `BIOSShare` on `v3`)
+run 2 and 3 once from that branch, then 4.
 
 ### Compile check (Swift feedback without a Mac)
 
@@ -544,6 +655,9 @@ limit) or 503.
 | `POST /v1/test-push` | test push to this device |
 | `GET /v1/nudge`, `PATCH /v1/nudge/settings`, `POST /v1/nudge/action` | Bewegungs-Stupser: `settings`, `today`, `last_check`, `nudges[]`, `week`, `options`; partial settings update (422 with text); answer of a notification button |
 | `POST /v1/live-activity/token`, `DELETE /v1/live-activity/token/{token}`, `GET /v1/live-activity` | Live Activity push tokens (`start`, `update`) and the current content state (also read by the lock screen widgets) |
+| `GET /v1/labs`, `GET /v1/labs/catalog`, `GET /v1/labs/markers/{id}` | Labor "Werte": `due`, `groups[].markers[]` (`latest`, `previous`, `sparkline`, `target`), `review`, `regions`; catalog kinds; marker `history` (HbA1c with `gmi`), `refs`, `links` |
+| `POST /v1/labs/documents` (raw PDF/JPEG/PNG, up to 15 MB), `GET /v1/labs/documents[/{id}[/file]]`, `PATCH`/`DELETE /v1/labs/documents/{id}` | Labor "Befunde": upload (201 new, 200 duplicate), list, document with `values`, original for the preview, review step (`document`, `values`, `confirm`, `retry`), discard |
+| `GET /v1/dashboard` block `labs` | Heute card and tab badge: `review_documents`, `waiting`, `errors`, `due` (faellig/bald), `has_values` |
 
 Rules the app relies on:
 
@@ -590,6 +704,7 @@ the earlier banner of the same kind). Payload:
 | `OUTLOOK_WEEKLY` | `outlook` | Umwelt | `reports.outlook --notify --force`: full weekly outlook (Sunday) |
 | `SYSTEM_ALERT` | `system` | Mehr | `reports.heartbeat` (pipeline warning and all-clear), test push |
 | `MOVE_NUDGE` | `move` | Heute | `reports.nudge --run` (Bewegungs-Stupser, silent, buttons Erledigt / Später / Heute nicht, see above) |
+| `LAB_REVIEW` | `labs` | Labor > Zu prüfen | `ingest.labs` after an extraction ("Befund erkannt", "N Werte erkannt, bitte prüfen."; silent, only with `"notify": true` in the server's `data/profile/labs.json`) |
 
 Category identifiers must stay identical in `AppDelegate.swift` and on the server.
 The ntfy and SMTP channels keep running in parallel on the server; one failing

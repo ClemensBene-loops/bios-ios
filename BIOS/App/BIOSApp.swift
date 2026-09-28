@@ -37,6 +37,11 @@ struct BIOSApp: App {
                         await VitalsStore.shared.flush()
                         // Stupser buttons pressed while offline.
                         await NudgeActionQueue.flush()
+                        // Labor: only once the tab was opened (a share from the
+                        // share sheet shows up without pulling).
+                        if LabStore.shared.fetchedAt != nil {
+                            await LabStore.shared.refresh()
+                        }
                         // Live Activity: start (fallback), refresh or end at night.
                         await LiveActivityController.shared.appBecameActive()
                     }

@@ -70,6 +70,12 @@ struct HeuteView: View {
                     router.show(.umwelt)
                 }
 
+                if let labs = dashboard?.labs, labs.showsCard {
+                    LabTodayCard(labs: labs) {
+                        router.showLabor(labs.reviewDocuments > 0 ? .reviewList : nil)
+                    }
+                }
+
                 LazyVGrid(columns: columns, spacing: 12) {
                     VirusTile(region: dashboard?.virusesWien)
                     PollenTile(pollen: dashboard?.pollen, outlookAt: dashboard?.outlook?.generatedAt)

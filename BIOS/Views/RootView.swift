@@ -33,6 +33,13 @@ struct RootView: View {
             .tabItem { Label(AppTab.umwelt.title, systemImage: AppTab.umwelt.symbol) }
             .tag(AppTab.umwelt)
 
+            NavigationStack(path: $router.laborPath) {
+                LaborView()
+            }
+            .tabItem { Label(AppTab.labor.title, systemImage: AppTab.labor.symbol) }
+            .tag(AppTab.labor)
+            .badge(laborBadge)
+
             NavigationStack(path: $router.mehrPath) {
                 MehrView()
                     .withDetailDestinations()
@@ -78,6 +85,11 @@ struct RootView: View {
         .onChange(of: state.pendingOpen) { _, _ in
             consumePendingOpen()
         }
+    }
+
+    /// Documents waiting for the review step (dashboard block `labs`), as tab badge.
+    private var laborBadge: Int {
+        dashboardStore.dashboard?.labs?.reviewDocuments ?? 0
     }
 
     /// Routes a tapped push (AppState.pendingOpen) to its tab/detail, then refreshes.

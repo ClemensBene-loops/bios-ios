@@ -225,6 +225,7 @@ struct BodyMapLayerContent: View {
     @EnvironmentObject private var router: Router
     @State private var selected: BodyMapRegion?
     @State private var pendingRoute: DetailRoute?
+    @State private var pendingLabor = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -258,9 +259,13 @@ struct BodyMapLayerContent: View {
             if let route = pendingRoute {
                 pendingRoute = nil
                 router.koerperPath.append(route)
+            } else if pendingLabor {
+                pendingLabor = false
+                router.showLabor()
             }
         }) { region in
-            BodyMapRegionSheet(region: region, demo: store.model?.demo == true) { route in
+            BodyMapRegionSheet(region: region, demo: store.model?.demo == true,
+                               onLabor: laborLink(for: region)) { route in
                 pendingRoute = route
                 selected = nil
             }
@@ -268,7 +273,43 @@ struct BodyMapLayerContent: View {
         }
         .task {
             await store.refresh()
+            consumeFocus()
         }
+        .onChange(of: router.bodyMapFocus) { _, _ in
+            consumeFocus()
+        }
+        .onChange(of: store.fetchedAt) { _, _ in
+            consumeFocus()
+        }
+    }
+
+    /// Neutral link "Laborwerte" in the sheet of a systems region that has
+    /// confirmed lab values (lab values never color the map).
+    private func laborLink(for region: BodyMapRegion) -> (() -> Void)? {
+        guard layer.isSystems, store.model?.demo != true,
+              LabStore.shared.overview?.hasValues(inRegion: region.id) == true else { return nil }
+        return {
+            pendingLabor = true
+            selected = nil
+        }
+    }
+
+    /// Opens the region a lab marker linked to (Router.showBodyMapRegion).
+    private func consumeFocus() {
+        guard let focus = router.bodyMapFocus else { return }
+        guard layer.isSystems else {
+            // The link always targets the systems map.
+            layerID = BodyMapLayerOption.systemsID
+            return
+        }
+        guard let region = store.model?.regions.first(where: { $0.id == focus }) else {
+            if (store.model != nil || store.lastError != nil) && !store.isLoading {
+                router.bodyMapFocus = nil
+            }
+            return
+        }
+        router.bodyMapFocus = nil
+        open(region)
     }
 
     private func open(_ region: BodyMapRegion) {
@@ -506,6 +547,8 @@ struct BodyMapRegionRow: View {
 struct BodyMapRegionSheet: View {
     let region: BodyMapRegion
     var demo = false
+    /// Neutral link into the Labor tab (only when the region has lab values).
+    var onLabor: (() -> Void)?
     let onLink: (DetailRoute) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -594,6 +637,29 @@ struct BodyMapRegionSheet: View {
                             .accessibilityHint("Öffnet \(link.route.title)")
                         }
                     }
+                }
+
+                if let onLabor {
+                    Button(action: onLabor) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "testtube.2")
+                            Text("Laborwerte im Tab Labor")
+                                .multilineTextAlignment(.leading)
+                            Spacer(minLength: 4)
+                            Image(systemName: "chevron.right")
+                        }
+                        .font(.body)
+                        .foregroundStyle(BIOSTheme.text2)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Öffnet den Tab Labor. Laborwerte färben die Körperkarte nicht.")
                 }
 
                 Text(BodyMapStyle.note)
