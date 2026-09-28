@@ -281,8 +281,11 @@ final class LabStore: ObservableObject {
     // MARK: - Upload
 
     /// Uploads a prepared file (PDF, JPEG, PNG) and follows its extraction.
+    /// Called after `beginPreparing`, so only a running transfer blocks it: the
+    /// former `isRunning` guard also matched `.preparing` and returned at once,
+    /// which left every in-app import stuck on "Wird vorbereitet" without sending.
     func upload(data: Data, contentType: String, name: String) async {
-        if uploadPhase?.isRunning == true { return }
+        if case .uploading = uploadPhase { return }
         uploadPhase = .uploading(name: name, progress: 0)
         do {
             let result = try await LabUpload.upload(data: data, contentType: contentType) { [weak self] fraction in
