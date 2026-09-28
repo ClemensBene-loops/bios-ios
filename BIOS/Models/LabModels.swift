@@ -57,6 +57,9 @@ enum LabDocumentStatus: String {
     case confirmed = "bestaetigt"
     case discarded = "verworfen"
     case failed = "fehler"
+    /// A later confirmed document holds the same values (file and values kept, hidden
+    /// from overview and history; undo with `restore`).
+    case superseded = "ersetzt"
     case unknown
 
     init(raw: String?) {
@@ -70,6 +73,7 @@ enum LabDocumentStatus: String {
         case .confirmed: return "bestätigt"
         case .discarded: return "verworfen"
         case .failed: return "Fehler"
+        case .superseded: return "ersetzt"
         case .unknown: return "unbekannt"
         }
     }
@@ -183,6 +187,12 @@ struct LabPoint: Identifiable, Equatable {
     let origin: String?
     /// "aus Dexcom-Kalibrierung" etc.
     let originLabel: String?
+    /// Merged "Blutzucker": "labor", "fingerstich" or "ambulanz".
+    let originGroup: String?
+    /// "Labor", "Fingerstich (Kalibrierung)", "Ambulanz".
+    let originGroupLabel: String?
+    /// Capillary value (fingerstick or letter "BZ"): never a lab reference.
+    let capillary: Bool
 
     init?(json: JSONValue?, index: Int = 0) {
         guard let json, json.objectValue != nil else { return nil }
@@ -211,8 +221,17 @@ struct LabPoint: Identifiable, Equatable {
         measuredAt = (measuredRaw?.count ?? 0) > 10 ? BIOSDate.parse(measuredRaw) : nil
         origin = json.str("origin")
         originLabel = json.str("origin_label")
+        originGroup = json.str("origin_group")
+        originGroupLabel = json.str("origin_group_label")
+        capillary = json.flag("capillary")
         id = resultID ?? "\(measuredRaw ?? dateRaw ?? "punkt")-\(index)"
     }
+
+    /// Point of the merged marker measured by a lab (has the lab's range).
+    var isLabOrigin: Bool { originGroup == "labor" }
+
+    /// "Fingerstich (Kalibrierung)" / "Labor" / origin label, for rows and captions.
+    var originText: String? { originGroupLabel ?? originLabel }
 
     /// Time of the measurement, else the day (noon).
     var when: Date? { measuredAt ?? date }
@@ -264,9 +283,31 @@ struct LabSparkPoint: Equatable {
 enum LabMarkerKind {
     /// "messgeraet": fingerstick from the meter, no lab, no reference range.
     static let device = "messgeraet"
+    /// "kombiniert": the merged "Blutzucker" (lab glucose, fingersticks, letter values).
+    static let combined = "kombiniert"
 
     static func isDevice(_ kind: String?) -> Bool {
         (kind ?? "").lowercased() == device
+    }
+
+    static func isCombined(_ kind: String?) -> Bool {
+        (kind ?? "").lowercased() == combined
+    }
+}
+
+/// `parts[]` of the merged marker: how many values per origin.
+struct LabMergedPart: Identifiable, Equatable {
+    let id: String
+    let label: String
+    let nValues: Int
+    let lastDate: String?
+
+    init?(json: JSONValue) {
+        guard let id = json.str("origin_group") else { return nil }
+        self.id = id
+        label = json.str("label") ?? id
+        nValues = json.int("n_values") ?? 0
+        lastDate = json.str("last_date")
     }
 }
 
@@ -286,6 +327,10 @@ struct LabMarkerEntry: Identifiable, Equatable {
     let kind: String?
     /// "aus Dexcom-Kalibrierung": shown instead of the reference bar.
     let sourceLabel: String?
+    /// Merged "Blutzucker": newest lab point (with the lab's range), nil otherwise.
+    let latestLab: LabPoint?
+    /// Merged "Blutzucker": values per origin.
+    let parts: [LabMergedPart]
 
     init?(json: JSONValue) {
         guard let id = json.str("id") else { return nil }
@@ -296,6 +341,8 @@ struct LabMarkerEntry: Identifiable, Equatable {
         custom = json.flag("custom")
         latest = LabPoint(json: json.obj("latest"))
         previous = LabPoint(json: json.obj("previous"))
+        latestLab = LabPoint(json: json.obj("latest_lab"))
+        parts = json.list("parts").compactMap { LabMergedPart(json: $0) }
         sparkline = json.list("sparkline").compactMap { point in
             guard let value = point.double("value") else { return nil }
             let measured = point.str("measured_at")
@@ -310,6 +357,12 @@ struct LabMarkerEntry: Identifiable, Equatable {
 
     /// A device reading (fingerstick): no reference, never flagged.
     var isDevice: Bool { LabMarkerKind.isDevice(kind) }
+
+    /// The merged "Blutzucker" (lab, fingerstick and clinic values in one series).
+    var isCombined: Bool { LabMarkerKind.isCombined(kind) }
+
+    /// The point that stands for this marker's lab status (merged: the newest lab point).
+    var statusPoint: LabPoint? { isCombined ? latestLab : latest }
 }
 
 /// A group of the overview ("Stoffwechsel", "Blutfette", ...).
@@ -434,6 +487,7 @@ struct LabOverview: Equatable {
     let lastValueOn: String?
     /// Number of fingerstick readings (device marker), additive.
     let nDeviceValues: Int
+    let ownMeasurements: LabOwnMeasurements?
 
     init(json: JSONValue) {
         schemaVersion = json.int("schema_version")
@@ -451,6 +505,7 @@ struct LabOverview: Equatable {
         nValues = json.int("n_values") ?? groups.reduce(0) { $0 + $1.markers.count }
         lastValueOn = json.str("last_value_on")
         nDeviceValues = json.int("n_device_values") ?? 0
+        ownMeasurements = LabOwnMeasurements(json: json.obj("own"))
     }
 
     var allMarkers: [LabMarkerEntry] {
@@ -460,6 +515,11 @@ struct LabOverview: Equatable {
     /// Lab markers only (device readings have no reference and no lab status).
     var labMarkers: [LabMarkerEntry] {
         allMarkers.filter { !$0.isDevice }
+    }
+
+    /// Card "Eigene Messungen" (`own`, additive since 2026-09-28).
+    var own: LabOwnMeasurements? {
+        ownMeasurements
     }
 
     var hasValues: Bool {
@@ -497,6 +557,11 @@ struct LabMarkerInfo: Equatable {
     let custom: Bool
     /// Device markers: "aus Dexcom-Kalibrierung".
     let sourceLabel: String?
+    /// Visit vitals from letters (`kind` "vital_visite"): no history, only in the document.
+    let hidden: Bool
+    let hiddenReason: String?
+    /// Merged "Blutzucker": values per origin.
+    let parts: [LabMergedPart]
 
     init(json: JSONValue?, fallbackID: String) {
         id = json?.str("id") ?? fallbackID
@@ -508,9 +573,13 @@ struct LabMarkerInfo: Equatable {
         kind = json?.str("kind")
         custom = json?.flag("custom") ?? false
         sourceLabel = json?.str("source_label")
+        hidden = json?.flag("hidden") ?? false
+        hiddenReason = json?.str("hidden_reason")
+        parts = (json?.list("parts") ?? []).compactMap { LabMergedPart(json: $0) }
     }
 
     var isDevice: Bool { LabMarkerKind.isDevice(kind) }
+    var isCombined: Bool { LabMarkerKind.isCombined(kind) }
 }
 
 /// One fingerstick with the last CGM value before it (`links[].pairs[]`).
@@ -639,7 +708,18 @@ struct LabMarkerDetail: Equatable {
 
     /// A device marker (fingerstick), by `kind` or by its points' origin.
     var isDevice: Bool {
-        marker.isDevice || cgmComparison != nil || (history.last?.origin != nil && history.last?.documentID == nil)
+        if isCombined { return false }
+        return marker.isDevice || cgmComparison != nil || (history.last?.origin != nil && history.last?.documentID == nil)
+    }
+
+    /// The merged "Blutzucker" (lab, fingerstick and clinic values), by `kind` or its points.
+    var isCombined: Bool {
+        marker.isCombined || history.contains { $0.originGroup != nil }
+    }
+
+    /// Merged marker: lab points only (with the lab's range), chronological.
+    var labHistory: [LabPoint] {
+        history.filter { $0.isLabOrigin }
     }
 
     /// The GMI link for today (HbA1c only).
@@ -679,10 +759,16 @@ struct LabValue: Identifiable, Equatable {
     /// "zu_pruefen", "bestaetigt", "verworfen".
     let review: String
     let edited: Bool
+    /// `kind` of the mapped catalog marker ("vital_visite" for height, weight, RR of letters).
+    let markerKind: String?
+    /// Visit vital from a letter: kept here only, never in overview or history.
+    let hidden: Bool
 
     init?(json: JSONValue, index: Int) {
         guard json.objectValue != nil else { return nil }
         id = json.str("id") ?? "wert-\(index)"
+        markerKind = json.str("marker_kind")
+        hidden = json.flag("hidden")
         markerID = json.str("marker_id")
         markerName = json.str("marker_name")
         group = json.str("group")
@@ -759,10 +845,18 @@ struct LabDocument: Identifiable, Equatable {
     let possibleDuplicateOf: String?
     /// nil in the list; the values of `GET /v1/labs/documents/{id}`.
     let values: [LabValue]?
+    /// Status `ersetzt`: the later document that holds the same values.
+    let supersededBy: LabDocumentRef?
+    let supersededAt: Date?
+    /// Older documents this one replaced.
+    let supersedes: [LabDocumentRef]
 
     init?(json: JSONValue) {
         guard let id = json.str("id") else { return nil }
         self.id = id
+        supersededBy = LabDocumentRef(json: json.obj("superseded_by"))
+        supersededAt = BIOSDate.parse(json.str("superseded_at"))
+        supersedes = json.list("supersedes").compactMap { LabDocumentRef(json: $0) }
         kind = json.str("kind")
         kindLabel = json.str("kind_label") ?? LabKind.label(json.str("kind"))
         title = json.str("title")
@@ -823,6 +917,130 @@ struct LabDocument: Identifiable, Equatable {
             }
         }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// Short reference to another document (`superseded_by`, `supersedes[]`).
+struct LabDocumentRef: Identifiable, Equatable {
+    let id: String
+    let title: String?
+    let collectedOn: String?
+    let kindLabel: String?
+
+    init?(json: JSONValue?) {
+        guard let json, let id = json.str("id") else { return nil }
+        self.id = id
+        title = json.str("title")
+        collectedOn = json.str("collected_on")
+        kindLabel = json.str("kind_label")
+    }
+
+    /// "Befund vom 15.09.2026" (or the title without a date).
+    var shortText: String {
+        if let day = BIOSDate.day(collectedOn) {
+            return "Befund vom \(LabFormat.fullDate(day))"
+        }
+        return title ?? kindLabel ?? "neuerem Befund"
+    }
+}
+
+// MARK: - Eigene Messungen (`own` of GET /v1/labs)
+
+/// Clemens' own measurements instead of the visit vitals printed in letters: height,
+/// weight, BMI (body profile or Whoop), home blood pressure, temperature, blood glucose.
+struct LabOwnMeasurements: Equatable {
+    struct Body: Equatable {
+        let heightCm: Double?
+        let heightSource: String?
+        let weightKg: Double?
+        let weightDate: String?
+        let weightSource: String?
+        let weightSourceLabel: String?
+        let bmi: Double?
+    }
+
+    struct BloodPressure: Equatable {
+        let days: Int
+        let meanSys: Double?
+        let meanDia: Double?
+        let meanPulse: Double?
+        let nSeries: Int
+        let nReadings: Int
+        /// "ok", "info", "warn".
+        let status: String?
+        let classificationText: String?
+        let lastSys: Double?
+        let lastDia: Double?
+        let lastPulse: Double?
+        let lastAt: Date?
+    }
+
+    struct Temperature: Equatable {
+        let value: Double
+        let measuredAt: Date?
+        let method: String?
+    }
+
+    struct Glucose: Equatable {
+        let markerID: String
+        let value: Double
+        let unit: String
+        let date: Date?
+        let measuredAt: Date?
+        let originLabel: String?
+        let nValues: Int
+    }
+
+    let label: String
+    let note: String?
+    let body: Body?
+    let bloodPressure: BloodPressure?
+    let temperature: Temperature?
+    let glucose: Glucose?
+
+    init?(json: JSONValue?) {
+        guard let json, json.objectValue != nil else { return nil }
+        label = json.str("label") ?? "Eigene Messungen"
+        note = json.str("note")
+        if let b = json.obj("body"), b.objectValue != nil {
+            body = Body(heightCm: b.double("height_cm"), heightSource: b.str("height_source"),
+                        weightKg: b.double("weight_kg"), weightDate: b.str("weight_date"),
+                        weightSource: b.str("weight_source"), weightSourceLabel: b.str("weight_source_label"),
+                        bmi: b.double("bmi"))
+        } else {
+            body = nil
+        }
+        if let p = json.obj("blood_pressure"), p.objectValue != nil {
+            let mean = p.obj("mean")
+            let last = p.obj("last")
+            bloodPressure = BloodPressure(
+                days: p.int("days") ?? 7, meanSys: mean?.double("sys"), meanDia: mean?.double("dia"),
+                meanPulse: mean?.double("pulse"), nSeries: p.int("n_series") ?? 0, nReadings: p.int("n_readings") ?? 0,
+                status: p.str("status"), classificationText: p.str("classification_text"),
+                lastSys: last?.double("sys"), lastDia: last?.double("dia"), lastPulse: last?.double("pulse"),
+                lastAt: BIOSDate.parse(last?.str("measured_at")))
+        } else {
+            bloodPressure = nil
+        }
+        if let t = json.obj("temperature"), let value = t.double("value") {
+            temperature = Temperature(value: value, measuredAt: BIOSDate.parse(t.str("measured_at")),
+                                      method: t.str("method"))
+        } else {
+            temperature = nil
+        }
+        if let g = json.obj("glucose"), let value = g.double("value") {
+            let measured = g.str("measured_at")
+            glucose = Glucose(markerID: g.str("marker_id") ?? "blood_glucose", value: value,
+                              unit: g.str("unit") ?? "mg/dL", date: BIOSDate.day(g.str("date")),
+                              measuredAt: (measured?.count ?? 0) > 10 ? BIOSDate.parse(measured) : nil,
+                              originLabel: g.str("origin_group_label"), nValues: g.int("n_values") ?? 0)
+        } else {
+            glucose = nil
+        }
+    }
+
+    var isEmpty: Bool {
+        body == nil && bloodPressure == nil && temperature == nil && glucose == nil
     }
 }
 

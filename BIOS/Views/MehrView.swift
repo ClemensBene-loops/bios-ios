@@ -114,10 +114,15 @@ struct MehrView: View {
                 } label: {
                     Label("Medikamente & Siri", systemImage: "cross.case")
                 }
+                NavigationLink {
+                    BodyProfileView()
+                } label: {
+                    Label("Körper: Größe und Gewicht", systemImage: "figure.stand")
+                }
             } header: {
                 Text("Kontext")
             } footer: {
-                Text("Rückwirkend markieren, auch per Siri: \"Alkohol in BIOS\". Unter Medikamente & Siri weitere Namen je Medikament für \"<Name> genommen in BIOS\".")
+                Text("Rückwirkend markieren, auch per Siri: \"Alkohol in BIOS\". Unter Medikamente & Siri weitere Namen je Medikament für \"<Name> genommen in BIOS\". Unter Körper Größe und Gewicht mit Datum.")
             }
 
             Section {

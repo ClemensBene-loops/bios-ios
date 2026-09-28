@@ -131,6 +131,7 @@ struct LabDeviceValueCard: View {
 /// Readings over time (x = date and time of day). Tap or drag shows one reading.
 struct LabDeviceChartCard: View {
     let detail: LabMarkerDetail
+    var note = "Jeder Punkt ist ein Fingerstich, mit Datum und Uhrzeit. Antippen oder ziehen zeigt den Wert."
     @State private var selected: Date?
 
     private struct Reading: Identifiable {
@@ -138,6 +139,8 @@ struct LabDeviceChartCard: View {
         let date: Date
         let value: Double
         let origin: String?
+        /// Lab value of the merged "Blutzucker" (drawn as a square).
+        let lab: Bool
     }
 
     var body: some View {
@@ -172,6 +175,7 @@ struct LabDeviceChartCard: View {
                         y: .value("Wert", reading.value)
                     )
                     .foregroundStyle(reading.id == focus?.id ? BIOSTheme.accent : BIOSTheme.text1)
+                    .symbol(reading.lab ? BasicChartSymbolShape.square : BasicChartSymbolShape.circle)
                     .symbolSize(reading.id == focus?.id ? 70 : 30)
                 }
                 if let focus, selected != nil {
@@ -213,7 +217,7 @@ struct LabDeviceChartCard: View {
             .accessibilityLabel("Verlauf \(detail.marker.name)")
             .accessibilityValue(spoken(readings))
 
-            Text("Jeder Punkt ist ein Fingerstich, mit Datum und Uhrzeit. Antippen oder ziehen zeigt den Wert.")
+            Text(note)
                 .font(.caption)
                 .foregroundStyle(BIOSTheme.text3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -228,7 +232,7 @@ struct LabDeviceChartCard: View {
     private func makeReadings() -> [Reading] {
         detail.history.compactMap { point in
             guard let date = point.when, let value = point.value else { return nil }
-            return Reading(id: point.id, date: date, value: value, origin: point.originLabel)
+            return Reading(id: point.id, date: date, value: value, origin: point.originText, lab: point.isLabOrigin)
         }
     }
 

@@ -231,6 +231,9 @@ struct LaborWerteSection: View {
             if let due = overview?.due, !due.isEmpty {
                 LabDueCard(items: due)
             }
+            if let own = overview?.own, !own.isEmpty {
+                LabOwnMeasurementsCard(own: own)
+            }
             if let overview, overview.hasValues {
                 LabSummaryChips(overview: overview, review: store.review)
                 ForEach(overview.groups) { group in
@@ -312,8 +315,9 @@ struct LabSummaryChips: View {
     let review: LabReviewSummary
 
     var body: some View {
-        // Device readings (fingerstick) have no lab reference: not counted here.
-        let statuses = overview.labMarkers.compactMap { $0.latest?.status }
+        // Device readings (fingerstick) have no lab reference: not counted here; the merged
+        // "Blutzucker" counts with its newest lab value.
+        let statuses = overview.labMarkers.compactMap { $0.statusPoint?.status }
         let normal = statuses.filter { $0 == .normal }.count
         let flagged = statuses.filter { $0.isFlagged }.count
         let noRef = statuses.filter { $0 == .keineReferenz }.count
@@ -379,7 +383,9 @@ struct LabMarkerRow: View {
     let marker: LabMarkerEntry
 
     var body: some View {
-        if marker.isDevice {
+        if marker.isCombined {
+            LabCombinedMarkerRow(marker: marker)
+        } else if marker.isDevice {
             LabDeviceMarkerRow(marker: marker)
         } else {
             labRow

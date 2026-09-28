@@ -312,6 +312,26 @@ Labor" link in its sheet.
   `origin_label`, and the `links` entry `cgm_vergleich`: "Wie weit der Sensor vor
   dem Fingerstich vom Finger-Wert entfernt war", finger vs sensor chart, table with
   difference in mg/dL and %, MARD-like mean and bias from 5 pairs (else `reason`).
+- **Blutzucker** (`blood_glucose`, `kind: "kombiniert"`, since build 2026-09-28): the
+  server merges the lab glucose, capillary letter values ("BZ (prä)", Ambulanz) and
+  the fingersticks into one marker (old ids answer with it). Row
+  (`LabCombinedViews.swift`): latest value of any origin with time and origin, below
+  the newest lab value with its reference ("Labor 15.09.: 92 mg/dL, Ref. 70 bis 99",
+  tag if outside), sparkline. The summary chips count it with its newest lab value.
+  Detail: latest value with origin, "Letzter Laborwert" with the lab's reference bar,
+  chart (squares = lab, circles = capillary), the CGM comparison of the fingersticks,
+  list of all values with origin (lab values with range and tag, document values open
+  the document).
+- **Eigene Messungen** (`own` of `GET /v1/labs`): card above the groups with height
+  and weight (tap opens the body editor), BMI, home blood pressure (7-day mean of the
+  home series, last reading, tag im Ziel/über Ziel/erhöht), last temperature and the
+  newest blood glucose (opens the merged marker). Height, weight, BMI and blood
+  pressure printed in doctor letters stay inside their document (grey tag "Praxis").
+- **Körper** (Mehr > Körper, `GET/PATCH /v1/body`, `DELETE /v1/body/weights/{id}`,
+  `BodyProfileView.swift`): height in cm, weight in kg with a date (one entry per
+  day), BMI from the server, weight history (own entries swipe to delete, Whoop values
+  read-only; Whoop's first value is undated). Values are checked in the app and by the
+  server (422 text shown).
 - **Befunde** (`GET /v1/labs/documents`): review banner "N Werte erkannt, bitte
   prüfen" (one document opens directly, several open the list), waiting and error
   lines, filter chips by kind, timeline grouped by month, expandable cards (values
@@ -323,7 +343,10 @@ Labor" link in its sheet.
   vom ...)" with a button to the other document; a document without
   `collected_on` (zu prüfen or bestätigt) shows a yellow "Abnahmedatum fehlt, bitte
   eintragen" that opens the review screen (a confirmed document saves the date with
-  `PATCH {"document": {"collected_on": ...}}`).
+  `PATCH {"document": {"collected_on": ...}}`). Status `ersetzt` (a later confirmed
+  document holds at least half of the same values): grey badge "ersetzt", hint
+  "ersetzt durch Befund vom ..." with "Rückgängig" (`PATCH {"restore": true}`); the
+  review screen shows the same with a link to the newer document.
 - **Review screen** (`GET/PATCH/DELETE /v1/labs/documents/{id}`): steps
   Hochgeladen, Erkannt, Bestätigt; preview of the original (`.../file`, PDFKit or
   image, full screen, memory only); editable kind (catalog kinds), date, title,

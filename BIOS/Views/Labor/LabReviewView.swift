@@ -134,6 +134,13 @@ struct LabDocumentReviewView: View {
             discardButton
         case .failed:
             failedCard(document)
+        case .superseded:
+            supersededCard(document)
+            if document.isLetter && (document.values ?? []).isEmpty {
+                summaryCard(document)
+            }
+            valuesSection(document)
+            discardButton
         default:
             assignmentCard(document)
             if document.isLetter && (document.values ?? []).isEmpty {
@@ -186,6 +193,54 @@ struct LabDocumentReviewView: View {
             }
         }
         .biosCard()
+    }
+
+    /// Status `ersetzt`: which document replaced it, and the undo.
+    private func supersededCard(_ document: LabDocument) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Ersetzt", systemImage: "arrow.triangle.2.circlepath")
+                .font(.headline)
+                .foregroundStyle(BIOSTheme.text1)
+            Text("Ersetzt durch \(document.supersededBy?.shortText ?? "einen neueren Befund") mit denselben Werten. Datei und Werte bleiben hier, zählen aber nicht mehr in Werte, Verlauf und Fällig-Liste.")
+                .font(.subheadline)
+                .foregroundStyle(BIOSTheme.text2)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 10) {
+                Button {
+                    Task { await restoreDocument() }
+                } label: {
+                    HStack(spacing: 6) {
+                        if saving { ProgressView().controlSize(.mini) }
+                        Text("Rückgängig")
+                    }
+                    .font(.body.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(BIOSTheme.accent)
+                .disabled(saving)
+                if let newer = document.supersededBy {
+                    NavigationLink(value: LabRoute.document(newer.id)) {
+                        Text("Ansehen")
+                            .font(.body.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+            if let errorText {
+                Text(errorText)
+                    .font(.footnote)
+                    .foregroundStyle(BIOSTheme.midText)
+            }
+        }
+        .biosCard()
+    }
+
+    private func restoreDocument() async {
+        guard !saving else { return }
+        saving = true
+        errorText = await store.restore(documentID)
+        saving = false
     }
 
     private var discardButton: some View {
@@ -586,7 +641,8 @@ struct LabStepsView: View {
         HStack(spacing: 6) {
             step(1, "Hochgeladen", state: .done)
             step(2, "Erkannt", state: recognized)
-            step(3, "Bestätigt", state: status == .confirmed ? .done : (status == .review ? .now : .open))
+            step(3, "Bestätigt", state: (status == .confirmed || status == .superseded) ? .done
+                 : (status == .review ? .now : .open))
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Schritt: \(status.label)")
@@ -600,7 +656,7 @@ struct LabStepsView: View {
 
     private var recognized: StepState {
         switch status {
-        case .review, .confirmed: return .done
+        case .review, .confirmed, .superseded: return .done
         case .waiting: return .now
         default: return .open
         }
@@ -796,6 +852,9 @@ struct LabValueEditRow: View {
         var parts: [String] = []
         if let raw = value.rawName, raw != value.displayName {
             parts.append("im Befund: \(raw)")
+        }
+        if value.hidden {
+            parts.append("Praxiswert: nur hier sichtbar, deine eigenen Messungen stehen unter Werte")
         }
         if let ref = value.refDisplay { parts.append(ref) }
         if let z = value.zScore { parts.append("z \(BIOSFormat.signed(z, digits: 2))") }

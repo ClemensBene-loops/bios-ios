@@ -50,7 +50,22 @@ struct LabMarkerDetailView: View {
 
     @ViewBuilder
     private func content(_ detail: LabMarkerDetail) -> some View {
-        if detail.isDevice {
+        if detail.isCombined {
+            LabCombinedDetailContent(detail: detail, region: store.overview?.region(forGroup: detail.marker.group)) { region in
+                router.showBodyMapRegion(region)
+            }
+        } else if detail.marker.hidden {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(detail.marker.name)
+                    .font(.largeTitle.bold())
+                    .accessibilityAddTraits(.isHeader)
+                    .padding(.horizontal, 4)
+                    .padding(.top, 6)
+                NotEvaluableBox(title: "Nur im Befund",
+                                text: detail.marker.hiddenReason
+                                    ?? "In der Praxis gemessen, nur im jeweiligen Befund sichtbar. Deine eigenen Messungen stehen unter Werte > Eigene Messungen.")
+            }
+        } else if detail.isDevice {
             LabDeviceDetailContent(detail: detail, region: store.overview?.region(forGroup: detail.marker.group)) { region in
                 router.showBodyMapRegion(region)
             }

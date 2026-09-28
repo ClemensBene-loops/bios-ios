@@ -262,6 +262,11 @@ final class LabStore: ObservableObject {
         }
     }
 
+    /// Undoes "ersetzt": the document counts again (`restore: true`). nil on success.
+    func restore(_ id: String) async -> String? {
+        await patch(id, body: ["restore": .bool(true)])
+    }
+
     /// Queues the document for a new extraction (`retry: true`).
     func retry(_ id: String) async -> String? {
         let error = await patch(id, body: ["retry": .bool(true)])

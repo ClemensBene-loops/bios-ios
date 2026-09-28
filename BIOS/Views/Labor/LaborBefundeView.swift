@@ -253,6 +253,8 @@ struct LabDocumentBadge: View {
             } else {
                 LabTag(text: "bestätigt", style: .good, symbol: "checkmark")
             }
+        case .superseded:
+            LabTag(text: "ersetzt", style: .grey, symbol: "arrow.triangle.2.circlepath")
         case .discarded, .unknown:
             LabTag(text: document.status.label, style: .grey)
         }
@@ -319,6 +321,31 @@ struct LabDocumentCard: View {
                 }
             }
 
+            if document.status == .superseded {
+                LabDocumentHint(
+                    symbol: "arrow.triangle.2.circlepath",
+                    text: supersededText,
+                    action: busy ? "..." : "Rückgängig",
+                    style: .calm,
+                    hint: "Der Befund zählt dann wieder in Werte und Verlauf."
+                ) {
+                    Task { await restore() }
+                }
+                if let actionError {
+                    Text(actionError)
+                        .font(.caption)
+                        .foregroundStyle(BIOSTheme.midText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else if !document.supersedes.isEmpty {
+                Text(document.supersedes.count == 1
+                     ? "Ersetzt einen älteren Befund mit denselben Werten."
+                     : "Ersetzt \(document.supersedes.count) ältere Befunde mit denselben Werten.")
+                    .font(.caption)
+                    .foregroundStyle(BIOSTheme.text3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             if let duplicateID = document.possibleDuplicateOf {
                 LabDocumentHint(
                     symbol: "doc.on.doc",
@@ -357,7 +384,13 @@ struct LabDocumentCard: View {
     }
 
     private var expandable: Bool {
-        document.status == .confirmed
+        document.status == .confirmed || document.status == .superseded
+    }
+
+    /// "ersetzt durch Befund vom 15.09.2026, zählt nicht mehr".
+    private var supersededText: String {
+        let by = document.supersededBy?.shortText ?? "neueren Befund"
+        return "ersetzt durch \(by), zählt nicht mehr in Werte und Verlauf"
     }
 
     /// Without a collection date the values fall back to the upload day.
@@ -391,7 +424,7 @@ struct LabDocumentCard: View {
         switch document.status {
         case .review:
             router.laborPath.append(.document(document.id))
-        case .confirmed:
+        case .confirmed, .superseded:
             withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
             if expanded {
                 store.primeDocument(document.id)
@@ -471,7 +504,9 @@ struct LabDocumentCard: View {
                                 .font(.footnote.weight(.semibold))
                                 .monospacedDigit()
                                 .foregroundStyle(BIOSTheme.text1)
-                            if let tag = value.status.tag, value.status.isFlagged {
+                            if value.hidden {
+                                LabTag(text: "Praxis", style: .grey)
+                            } else if let tag = value.status.tag, value.status.isFlagged {
                                 LabTag(text: tag, style: LabTag.style(for: value.status))
                             }
                         }
@@ -507,6 +542,13 @@ struct LabDocumentCard: View {
     private func retry() async {
         busy = true
         actionError = await store.retry(document.id)
+        busy = false
+    }
+
+    private func restore() async {
+        guard !busy else { return }
+        busy = true
+        actionError = await store.restore(document.id)
         busy = false
     }
 
