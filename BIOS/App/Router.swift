@@ -71,12 +71,14 @@ enum DetailRoute: String, CaseIterable, Hashable {
     case loop
     case alkohol
     case blutdruck
+    case temperatur
 
     var title: String {
         switch self {
         case .gesundheit: return "Gesundheits-Score"
         case .alkohol: return "Alkohol-Tage"
         case .blutdruck: return "Blutdruck"
+        case .temperatur: return "Temperatur"
         case .infekt: return "Infekt-Check"
         case .viren: return "Viren im Abwasser"
         case .pollen: return "Pollen"
@@ -92,6 +94,7 @@ enum DetailRoute: String, CaseIterable, Hashable {
         switch self {
         case .viren, .pollen: return .umwelt
         case .alkohol: return .mehr
+        case .temperatur: return .koerper
         default: return .heute
         }
     }
@@ -110,6 +113,7 @@ enum DetailRoute: String, CaseIterable, Hashable {
         case "loop", "nightscout": self = .loop
         case "alkohol", "alcohol", "events", "kalender": self = .alkohol
         case "blutdruck", "blood_pressure", "bp": self = .blutdruck
+        case "temperatur", "temperature", "body_temp", "koerpertemperatur", "fieber": self = .temperatur
         default: return nil
         }
     }

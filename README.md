@@ -59,9 +59,21 @@ labels, no third-party dependencies (Swift Charts and PDFKit are Apple's).
   pollen, glucose, recovery/sleep, insulin, Loop, blood pressure when there are
   readings). A tap on a tile opens its detail view with charts. "Stand" line at
   the bottom.
-- **Körper**: Körperkarte on top (see below), then Whoop, glucose and insulin in
-  detail, charts with the personal baseline band, 7/28 day switch shared with the
-  detail screens.
+- **Körper**: Körperkarte on top (see below), then Whoop, Temperatur, glucose and
+  insulin in detail, charts with the personal baseline band, 7/28 day switch shared
+  with the detail screens.
+- **Temperatur** (Körper section + detail `temperatur`, `TemperatureViews.swift`,
+  `GET /v1/series?metric=body_temp`): card over the shared 7/28 range, last reading
+  big (time, method, "erhöht"/"Fieber"), one dot per reading colored normal/erhöht/
+  Fieber, reference lines 37,5 "erhöht" and 38 "Fieber" (context only, never an
+  alarm), infection episode days as red dots under the axis, scrub bubble with time,
+  value and method. Detail: 24 h / 7 / 28 / 90 days / 1 year (90 days and 1 year: line
+  through the daily maximum from `daily`, readings as dots), list of readings,
+  Whoop skin temperature as its own chart (own axis, never mixed into the °C scale),
+  "Temperatur eintragen" opens the same quick log as the "+" on Heute. Tolerant: old
+  servers without `daily`/`last`/`level` still draw; without the series at all the
+  card falls back to the dashboard `vitals` (last reading, today's maximum). Push
+  `bios.detail` `temperatur` (aliases `temperature`, `body_temp`, `fieber`) opens it.
 - **Umwelt**: viruses in wastewater (Wien, Germany) with fine trend arrows, pollen
   forecast for the next 4 days, "Reiseziele" (`environment.trips`: destinations of
   the next 14 days from the calendar, city and dates only; kind symbol, the
@@ -767,7 +779,7 @@ limit) or 503.
 | `GET /v1/summary` | v1 screen (build 2), kept unchanged on the server |
 | `GET /v1/dashboard` | everything on Heute, Umwelt and Mehr: `health` (Gesundheits-Score), `infection` (hero, score, chips), `bodymap` (Heute card), `vitals`, `outlook`, `tiles`, `environment`, `freshness`, `push`, `events`, `intake`, `schema_version` |
 | `GET /v1/bodymap[?layer=muscles][&demo=1]` | Körperkarte: `layer`, `demo`, `layers`, `note`, `regions[]` (`id`, `label`, `view`, `status`, `reason`, `neutral`, `anchor`, `shapes[]`, `metrics[]`, `links[]`), `statuses[]` legend, `summary`, `layout_version`, `aspect`; contract in `docs/API_v1.md` (BIOS repo), section "Körperkarte", example `docs/fixtures/bodymap.json` |
-| `GET /v1/series?metric=...&days=...[&source=...]` | chart data: points, baseline band, reference lines, `flags`, `context_flags` |
+| `GET /v1/series?metric=...&days=...[&source=...]` | chart data: points, baseline band, reference lines, `flags`, `context_flags`; `body_temp` adds per point `method`, `level`, `id` and on top `daily`, `last`, `companion` |
 | `POST/DELETE/GET /v1/events` | alcohol marks per day |
 | `GET/PUT /v1/supplements`, `POST/GET /v1/intake` | supplement regimen and daily ticks |
 | `POST/GET /v1/medications`, `DELETE /v1/medications/{id}` | medication log |

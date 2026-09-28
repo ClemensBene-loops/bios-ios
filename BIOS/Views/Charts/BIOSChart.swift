@@ -127,6 +127,10 @@ struct ChartSpec {
     /// Series shown in the bubble only with a point exactly at the selected x
     /// (e.g. clinic values); all others fall back to their nearest earlier point.
     var exactOnlySeries: Set<String> = []
+    /// Extra bubble line for a point exactly at that x (e.g. the measuring method of a reading).
+    var bubbleNotes: [Date: String] = [:]
+    /// Hour axis of single readings: the bubble shows the exact time ("Mo 28.09., 07:40"), not "07:00".
+    var exactTimes: Bool = false
 
     var isEmpty: Bool {
         bars.isEmpty && lines.isEmpty && extraPoints.isEmpty
@@ -295,6 +299,9 @@ struct PreparedChart: Equatable {
                 lines.append(prefix + "keine Probe")
             }
         }
+        if let note = spec.bubbleNotes[date], !note.isEmpty {
+            lines.append(note)
+        }
         if lines.count == 1 {
             lines.append("keine Daten")
         }
@@ -322,6 +329,8 @@ struct PreparedChart: Equatable {
 
     private func selectionTitle(_ date: Date) -> String {
         switch spec.unit {
+        case .hour where spec.exactTimes:
+            return "\(BIOSFormat.dayLabel(date)), \(BIOSFormat.time(date))"
         case .hour:
             return "\(BIOSFormat.dayLabel(date)), \(BIOSFormat.twoDigits(Calendar.current.component(.hour, from: date))):00"
         case .week:
@@ -338,6 +347,8 @@ struct PreparedChart: Equatable {
 
     private func pointDate(_ date: Date) -> String {
         switch spec.unit {
+        case .hour where spec.exactTimes:
+            return BIOSFormat.time(date)
         case .hour:
             return BIOSFormat.twoDigits(Calendar.current.component(.hour, from: date)) + ":00"
         case .day:
@@ -443,6 +454,11 @@ struct PreparedChart: Equatable {
         hasher.combine(spec.xStart)
         hasher.combine(spec.xEnd)
         hasher.combine(String(describing: spec.unit))
+        hasher.combine(spec.exactTimes)
+        for (date, note) in spec.bubbleNotes.sorted(by: { $0.key < $1.key }) {
+            hasher.combine(date)
+            hasher.combine(note)
+        }
         return hasher.finalize()
     }
 

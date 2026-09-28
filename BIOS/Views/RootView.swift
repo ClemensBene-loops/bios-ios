@@ -128,6 +128,7 @@ struct DetailView: View {
             case .loop: LoopDetailView()
             case .alkohol: AlcoholCalendarView()
             case .blutdruck: BloodPressureDetailView()
+            case .temperatur: TemperatureDetailView()
             case .gesundheit: HealthDetailView()
             }
         }

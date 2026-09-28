@@ -71,19 +71,4 @@ private struct GlucoseNotEvaluableNote: View {
     }
 }
 
-/// Körpertemperatur (readings entered in the app, `body_temp`): only shown
-/// when there is at least one reading in the selected range.
-struct BodyTemperatureSection: View {
-    let days: Int
-
-    var body: some View {
-        SeriesReader(request: SeriesStore.Request(metric: MetricKind.bodyTemp.metric, days: days, source: nil)) { entry in
-            if let model = entry?.model, model.hasValues {
-                VStack(alignment: .leading, spacing: 12) {
-                    SectionHeader(title: "Temperatur")
-                    MetricChartCard(kind: .bodyTemp, days: days, compact: true)
-                }
-            }
-        }
-    }
-}
+// BodyTemperatureSection (Temperatur): TemperatureViews.swift
