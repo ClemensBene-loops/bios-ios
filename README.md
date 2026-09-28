@@ -26,7 +26,8 @@ repo (`api/server.py`, `api/dashboard.py`, `api/series.py`, `api/intake.py`,
 Status (2026-09-26): v2 lives on branch `v2-dashboard` (TestFlight builds `2.0 (3)`
 and later: charts, infection score, blood pressure, quick log, Gesundheits-Score,
 Live Activity, Körperkarte). `main` still holds v1 (build `1.0 (2)`, PR #1) until
-`v2-dashboard` is merged.
+`v2-dashboard` is merged. v3 work (Bewegungs-Stupser, later the Labor tab) lives on
+branch `v3`, cut from `v2-dashboard`.
 
 This repo is **public**: no secrets, no server URL, no IPA and no personal health
 data are ever committed or uploaded as workflow artifacts. Sample data in the code
@@ -57,8 +58,8 @@ symbol or text, Dynamic Type and VoiceOver labels, no third-party dependencies
 - **Umwelt**: viruses in wastewater (Wien, Germany) with fine trend arrows, pollen
   forecast for the next 4 days, allergy block, season hints.
 - **Mehr**: push status (permission, APNs registration, token upload, last push),
-  "Test-Push senden", data freshness per source, server hints, alcohol calendar,
-  version and push environment.
+  "Test-Push senden", Bewegungs-Stupser (see below), data freshness per source,
+  server hints, alcohol calendar, version and push environment.
 - **Charts** (Swift Charts): scrubbing with a dashed rule and the value, header
   numbers follow the selected range (mean over 7/28 days, "gestern" small), episode
   days as red dots, context days (glucose/insulin up) as indigo diamonds.
@@ -219,6 +220,40 @@ entitlement). Phrases (German):
 Siri answers with a short German confirmation; without network the entry is queued
 and sent when the app is online again.
 
+### Bewegungs-Stupser (move nudges)
+
+A quiet push "kurz bewegen" when glucose rises steeply after a meal (`spitze`) or
+insulin works sluggishly (`zaeh`). The rule, its guards and the cron live on the
+server (`analysis/nudge.py`, `reports/nudge.py`); the app only registers the
+category, answers the buttons and edits the settings. **Default off.**
+
+- **Push**: `aps.category` `MOVE_NUDGE`, thread `move`, no sound, interruption level
+  `active`; `bios` = `{tag: "walking", kind: "move", priority: "default", tab:
+  "heute", nudge_id, nudge_kind: "spitze"|"zaeh"}`. A tap opens Heute.
+- **Buttons** (`AppDelegate.moveNudgeCategory`): `NUDGE_DONE` "Erledigt",
+  `NUDGE_SNOOZE` "Später", `NUDGE_OFF_TODAY` "Heute nicht", none with `.foreground`,
+  so they work from the lock screen and on the Apple Watch without opening the app.
+  Each one posts `POST /v1/nudge/action` `{"id": nudge_id, "action":
+  "done"|"snooze"|"off_today"}` inside a UIKit background task
+  (`NudgeActionQueue`, `BIOS/App/NudgeStore.swift`). 404/422 (unknown or old id) are
+  accepted; offline or 5xx answers are queued in UserDefaults and retried when the
+  app becomes active (dropped after 12 h).
+- **Apple Watch**: iOS mirrors the notification with its buttons to the watch
+  automatically; there is no watchOS app.
+- **Mehr > Bewegungs-Stupser** (`BIOS/Views/NudgeSection.swift`): switch (one
+  sentence what it does, quiet, at most N per day), tone Freundlich / Frech with an
+  example text, time window (half-hour steps within `options.hours_bounds`), maximum
+  per day (`options.max_per_day_range`), "Heute" (sent, remaining, cooldown or
+  "Heute nicht"), the last check's reason while on, then "Stupser und Wirkung": the
+  weekly text and the last nudges with glucose, Δ30/Δ60 mg/dL and the answer (3
+  shown, "Alle 10 zeigen"). Every change is a partial `PATCH /v1/nudge/settings`;
+  the switch reverts and a calm line shows the server's 422 text if it is rejected.
+  `GET /v1/nudge` is cached like the dashboard (DiskCache key `nudge`); a server
+  without the endpoint (404) shows "Server kennt Stupser noch nicht".
+- **Krafttraining line on Heute**: if `/v1/dashboard` carries `training.strength`
+  (`last_at`, `days_since`, `note`), a calm card under the tiles says "Letztes
+  Krafttraining vor N Tagen" with the server's note; absent means no line.
+
 ### Deep links from a push
 
 Every push carries `bios.tab` (`heute`, `umwelt`, `mehr`) and optionally
@@ -347,6 +382,7 @@ keys in its contract test.
   categories, token upload), `AppState.swift`, `Router.swift` (tabs, detail routes,
   push deep links), stores `DashboardStore`, `SeriesStore`, `EventStore`, `LogStores`
   (supplements, medications, offline queues), `BodyMapStore` (body map + cache),
+  `NudgeStore` (Bewegungs-Stupser settings + cache, notification button queue),
   `AlcoholIntents.swift` (App Intents).
 - `BIOS/Networking/`: `APIClient.swift` (+ `APIClient+Logs.swift`; Bearer auth, retry),
   `APIModels.swift`, `DiskCache.swift` (offline cache), `JSONValue+Access.swift`.
@@ -506,6 +542,7 @@ limit) or 503.
 | `POST/GET /v1/medications`, `DELETE /v1/medications/{id}` | medication log |
 | `POST /v1/refresh`, `GET /v1/refresh` | pull to refresh: request a rate-limited Whoop pull, poll its state (`queued`, `reason`, `last_pull`, `next_allowed_at`, `pending`) |
 | `POST /v1/test-push` | test push to this device |
+| `GET /v1/nudge`, `PATCH /v1/nudge/settings`, `POST /v1/nudge/action` | Bewegungs-Stupser: `settings`, `today`, `last_check`, `nudges[]`, `week`, `options`; partial settings update (422 with text); answer of a notification button |
 | `POST /v1/live-activity/token`, `DELETE /v1/live-activity/token/{token}`, `GET /v1/live-activity` | Live Activity push tokens (`start`, `update`) and the current content state (also read by the lock screen widgets) |
 
 Rules the app relies on:
@@ -552,6 +589,7 @@ the earlier banner of the same kind). Payload:
 | `OUTLOOK_ALERT` | `outlook` | Umwelt (> Viren or Pollen) | `reports.outlook --notify`: changed virus, pollen and allergy alerts |
 | `OUTLOOK_WEEKLY` | `outlook` | Umwelt | `reports.outlook --notify --force`: full weekly outlook (Sunday) |
 | `SYSTEM_ALERT` | `system` | Mehr | `reports.heartbeat` (pipeline warning and all-clear), test push |
+| `MOVE_NUDGE` | `move` | Heute | `reports.nudge --run` (Bewegungs-Stupser, silent, buttons Erledigt / Später / Heute nicht, see above) |
 
 Category identifiers must stay identical in `AppDelegate.swift` and on the server.
 The ntfy and SMTP channels keep running in parallel on the server; one failing
