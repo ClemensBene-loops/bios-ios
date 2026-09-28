@@ -61,8 +61,8 @@ labels, no third-party dependencies (Swift Charts and PDFKit are Apple's).
   detail screens.
 - **Umwelt**: viruses in wastewater (Wien, Germany) with fine trend arrows, pollen
   forecast for the next 4 days, allergy block, season hints.
-- **Labor**: lab values and documents (see "Labor" below), segment "Werte | Befunde",
-  import via "+" or the share sheet.
+- **Labor**: lab values and documents (see "Labor" below), segment "Werte | Befunde"
+  with one explaining line each, one "Befund importieren" button for both, or the share sheet.
 - **Mehr**: push status (permission, APNs registration, token upload, last push),
   "Test-Push senden", Bewegungs-Stupser (see below), data freshness per source,
   server hints, alcohol calendar, version and push environment.
@@ -214,14 +214,25 @@ All three queue writes on disk when offline and send them later; the dashboard's
 
 ### Siri and Shortcuts
 
-App Intents in the main target (`BIOS/App/AlcoholIntents.swift`, no extension, no
-entitlement). Phrases (German):
+App Intents in the main target (`BIOS/App/LogIntents.swift`, no extension, no
+entitlement; 9 of the 10 allowed App Shortcuts). Phrases (German):
 
 | Intent | Phrases |
 |---|---|
 | Alkohol eintragen (today, optional day parameter) | "Alkohol in BIOS", "BIOS heute Alkohol", "Alkohol in BIOS eintragen" |
 | Alkohol gestern eintragen | "Gestern Alkohol in BIOS", "BIOS gestern Alkohol" |
 | Supplements genommen (all active items today) | "Supplements genommen in BIOS", "BIOS Supplements genommen" |
+| Supplement genommen / zurücksetzen (one item) | "<Supplement> genommen in BIOS", "<Supplement> zurücksetzen in BIOS" |
+| Alle Supplements austragen (every tick of today) | "Alle Supplements austragen in BIOS", "Supplements zurücksetzen in BIOS"; asks "N Häkchen von heute entfernen?" first (`POST /v1/intake` `all` + `taken: false`) |
+| Medikament jetzt genommen (plan item, plan dose, now) | "<Medikament> genommen in BIOS", "BIOS <Medikament> genommen"; answers "Eingetragen: <Name>, heute 2 von 3" (more than planned is logged and said) |
+| Medikament eintragen (asks amount and time) | "<Medikament> in BIOS", "<Medikament> eintragen in BIOS" |
+| Temperatur eintragen | "Temperatur in BIOS", "BIOS Temperatur" |
+
+`<Medikament>` is an `AppEntity` from the cached server plan: Siri accepts the item
+name and every synonym of the server field `aliases` (`DisplayRepresentation.synonyms`,
+string query ignores case, accents, spaces and hyphens). Synonyms are edited in
+Mehr > Medikamente & Siri or in the plan editor; they live only on the server, never
+in this repository.
 
 Siri answers with a short German confirmation; without network the entry is queued
 and sent when the app is online again.
@@ -311,7 +322,9 @@ Labor" link in its sheet.
   übernehmen" = one PATCH with the changed fields, discards and `confirm: true`;
   "Verwerfen" = DELETE after a confirmation. A confirmed document opens the same
   screen with "Änderungen speichern". 409/422 texts from the server are shown calmly.
-- **Import in the app**: "+" > "PDF oder Bild aus Dateien", "Foto auswählen"
+- **Import in the app**: one wide button "Befund importieren" under the segment line
+  (same in Werte and Befunde; an upload started in Werte switches to Befunde, where
+  the progress card and the new document show) > "PDF oder Bild aus Dateien", "Foto auswählen"
   (PhotosPicker, no permission), "Foto aufnehmen" (camera,
   `NSCameraUsageDescription`). Photos and image files become JPEG (long side at
   most 3000 px), PDFs stay PDF; > 15 MB is refused before sending. Upload:

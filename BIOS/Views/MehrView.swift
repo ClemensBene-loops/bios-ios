@@ -109,10 +109,15 @@ struct MehrView: View {
                 NavigationLink(value: DetailRoute.alkohol) {
                     Label("Alkohol-Tage", systemImage: "wineglass")
                 }
+                NavigationLink {
+                    MedicationAliasListView()
+                } label: {
+                    Label("Medikamente & Siri", systemImage: "cross.case")
+                }
             } header: {
                 Text("Kontext")
             } footer: {
-                Text("Rückwirkend markieren, auch per Siri: \"Alkohol in BIOS\".")
+                Text("Rückwirkend markieren, auch per Siri: \"Alkohol in BIOS\". Unter Medikamente & Siri weitere Namen je Medikament für \"<Name> genommen in BIOS\".")
             }
 
             Section {

@@ -239,6 +239,7 @@ struct MedicationPlanItemForm: View {
             Section {
                 TextField("Notiz", text: FormBindings.optional($item.note), axis: .vertical)
             }
+            MedicationAliasSection(aliases: aliasBinding, name: item.name)
         }
         .navigationTitle(item.name.isEmpty ? "Neues Medikament" : item.name)
         .navigationBarTitleDisplayMode(.inline)
@@ -248,6 +249,13 @@ struct MedicationPlanItemForm: View {
         Binding<Int>(
             get: { item.target },
             set: { item.perDay = $0 }
+        )
+    }
+
+    private var aliasBinding: Binding<[String]> {
+        Binding<[String]>(
+            get: { item.aliases ?? [] },
+            set: { item.aliases = $0 }
         )
     }
 
@@ -262,6 +270,172 @@ struct MedicationPlanItemForm: View {
                 item.times[index] = FormBindings.time(from: value)
             }
         )
+    }
+}
+
+// MARK: - Siri synonyms (aliases)
+
+/// Form section: synonyms Siri accepts for a plan item (server field `aliases`),
+/// swipe to remove, text field to add. At most 10, like the server.
+struct MedicationAliasSection: View {
+    @Binding var aliases: [String]
+    let name: String
+    @State private var newAlias = ""
+
+    var body: some View {
+        Section {
+            ForEach(aliases, id: \.self) { alias in
+                Text(alias)
+            }
+            .onDelete { offsets in
+                aliases.remove(atOffsets: offsets)
+            }
+            if aliases.count < 10 {
+                HStack {
+                    TextField("Neuer Name (z. B. Wirkstoff)", text: $newAlias)
+                        .textInputAutocapitalization(.words)
+                        .autocorrectionDisabled()
+                        .submitLabel(.done)
+                        .onSubmit(add)
+                    Button(action: add) {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.title3)
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(newAlias.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .accessibilityLabel("Namen hinzufügen")
+                }
+            }
+        } header: {
+            Text("Weitere Namen für Siri")
+        } footer: {
+            Text("Siri erkennt das Medikament auch unter diesen Namen, etwa Wirkstoff, Markenname oder ein Alltagswort wie Inhalator: \"<Name> genommen in BIOS\". Wischen zum Entfernen. Die Namen liegen nur am Server.")
+        }
+    }
+
+    private func add() {
+        let cleaned = MedicationPlanItem.cleanAliases(aliases + [newAlias], name: name)
+        aliases = cleaned
+        newAlias = ""
+    }
+}
+
+/// Mehr > Medikamente & Siri: plan items with their synonyms.
+struct MedicationAliasListView: View {
+    @EnvironmentObject var plan: MedicationPlanStore
+
+    var body: some View {
+        List {
+            Section {
+                if plan.allItems.isEmpty {
+                    Text("Noch kein Medikamentenplan. Unter Heute > Medikamente > Plan bearbeiten anlegen.")
+                        .foregroundStyle(BIOSTheme.text2)
+                }
+                ForEach(plan.allItems) { item in
+                    NavigationLink {
+                        MedicationAliasEditView(item: item)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.name)
+                                .font(.body.weight(.semibold))
+                            Text(aliasSummary(item))
+                                .font(.footnote)
+                                .foregroundStyle(BIOSTheme.text2)
+                        }
+                    }
+                    .disabled(item.serverID == nil)
+                }
+            } header: {
+                Text("Namen für Siri")
+            } footer: {
+                Text("Sag \"<Name> genommen in BIOS\": BIOS trägt eine Einnahme jetzt mit der Dosis aus dem Plan ein und sagt, wie viele heute schon genommen sind. \"<Name> in BIOS\" fragt nach Menge und Zeit.")
+            }
+            if let error = plan.lastError {
+                Section {
+                    Text(error)
+                        .font(.footnote)
+                        .foregroundStyle(BIOSTheme.text2)
+                }
+            }
+        }
+        .navigationTitle("Medikamente & Siri")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            await plan.flush()
+            await plan.refresh()
+        }
+        .refreshable {
+            await plan.refresh()
+        }
+    }
+
+    private func aliasSummary(_ item: MedicationPlanItem) -> String {
+        guard let aliases = item.aliases, !aliases.isEmpty else { return "keine weiteren Namen" }
+        return aliases.joined(separator: ", ")
+    }
+}
+
+/// Edits the synonyms of one plan item and saves the plan (PUT, queued offline).
+struct MedicationAliasEditView: View {
+    @EnvironmentObject var plan: MedicationPlanStore
+    @Environment(\.dismiss) var dismiss
+    let item: MedicationPlanItem
+    @State private var aliases: [String] = []
+    @State private var loaded = false
+    @State private var saving = false
+    @State private var message: String?
+
+    var body: some View {
+        Form {
+            MedicationAliasSection(aliases: $aliases, name: item.name)
+            if let message {
+                Section {
+                    Text(message)
+                        .font(.footnote)
+                        .foregroundStyle(BIOSTheme.text2)
+                }
+            }
+        }
+        .navigationTitle(item.name)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button(saving ? "Speichert ..." : "Sichern") {
+                    save()
+                }
+                .disabled(saving)
+            }
+        }
+        .onAppear {
+            if !loaded {
+                aliases = item.aliases ?? []
+                loaded = true
+            }
+        }
+    }
+
+    private func save() {
+        saving = true
+        let cleaned = MedicationPlanItem.cleanAliases(aliases, name: item.name)
+        let list = plan.allItems.map { entry -> MedicationPlanItem in
+            var copy = entry
+            if entry.id == item.id {
+                copy.aliases = cleaned
+            }
+            return copy
+        }
+        Task { @MainActor in
+            let outcome = await plan.saveItems(list)
+            saving = false
+            switch outcome {
+            case .synced:
+                dismiss()
+            case .queued:
+                message = "Gespeichert, wird nachgereicht, sobald BIOS online ist."
+            case .failed(let text):
+                message = "Nicht gespeichert: \(text)"
+            }
+        }
     }
 }
 

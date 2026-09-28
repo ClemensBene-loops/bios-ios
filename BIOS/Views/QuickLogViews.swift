@@ -633,7 +633,7 @@ struct MedicationLogView: View {
                     if let planMessage {
                         Text(planMessage)
                     }
-                    Text(planHint(isToday: isToday) + " Siri: \"<Name> in BIOS\".")
+                    Text(planHint(isToday: isToday) + " Siri: \"<Name> genommen in BIOS\" (auch Wirkstoff oder Alltagswort, siehe Mehr > Medikamente & Siri).")
                 }
             }
 

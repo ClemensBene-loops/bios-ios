@@ -4,7 +4,7 @@ import Foundation
 // Siri / Shortcuts. App Intents in the main app target need no extension,
 // entitlement or Info.plist key; the phrases are registered by `BIOSShortcuts`
 // at build time (App Intents metadata extraction). Apple requires the app name
-// in every phrase and allows at most 10 App Shortcuts per app (8 used here).
+// in every phrase and allows at most 10 App Shortcuts per app (9 used here).
 // Supplements and medications are entities from the cached server lists; after
 // a list loads, `BIOSShortcuts.updateAppShortcutParameters()` lets Siri learn
 // the names (no names in code: the lists live only on the server).
@@ -83,14 +83,24 @@ struct SupplementsTakenIntent: AppIntent {
     }
 }
 
-/// Un-marks every supplement of today.
+/// Removes every supplement tick of today ("Alle Supplements austragen").
+/// Asks first ("3 Häkchen von heute entfernen?"), then says what it did.
 struct SupplementsResetIntent: AppIntent {
-    static let title: LocalizedStringResource = "Supplements zurücksetzen"
+    static let title: LocalizedStringResource = "Alle Supplements austragen"
+    static let description = IntentDescription("Entfernt alle Supplement-Häkchen von heute.")
 
     init() {}
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        let text = await LogIntentRunner.allSupplements(taken: false)
+        let count = await LogIntentRunner.supplementTicksToday()
+        if count == 0 {
+            return .result(dialog: "Heute ist in BIOS kein Supplement abgehakt.")
+        }
+        let question: IntentDialog = count == 1
+            ? "1 Häkchen von heute entfernen?"
+            : "\(count) Häkchen von heute entfernen?"
+        try await requestConfirmation(result: .result(dialog: question), confirmationActionName: .go)
+        let text = await LogIntentRunner.clearSupplements(count: count)
         return .result(dialog: "\(text)")
     }
 }
@@ -133,13 +143,42 @@ struct MedicationEntity: AppEntity {
 
     let id: String
     let name: String
+    /// Synonyms from the server (`aliases`): Siri accepts each of them for the
+    /// entity parameter, so "Asthma-Spray genommen in BIOS" finds the inhaler.
+    var aliases: [String] = []
 
     var displayRepresentation: DisplayRepresentation {
-        DisplayRepresentation(title: "\(name)")
+        DisplayRepresentation(
+            title: "\(name)",
+            subtitle: nil,
+            image: nil,
+            synonyms: aliases.map { alias -> LocalizedStringResource in "\(alias)" }
+        )
+    }
+
+    /// True when `text` names this item: name or a synonym, ignoring case,
+    /// accents, hyphens and spaces ("Asthmaspray" = "Asthma-Spray").
+    func matches(_ text: String) -> Bool {
+        let needle = Self.fold(text)
+        guard !needle.isEmpty else { return false }
+        return ([name] + aliases).contains { candidate in
+            let folded = Self.fold(candidate)
+            guard !folded.isEmpty else { return false }
+            // "Inhalator" finds "Asthma-Inhalator"; a spoken sentence around a
+            // name ("mein Inhalator") still matches when the name has >= 4 letters.
+            return folded == needle || folded.contains(needle) || (folded.count >= 4 && needle.contains(folded))
+        }
+    }
+
+    static func fold(_ text: String) -> String {
+        text.replacingOccurrences(of: "ß", with: "ss")
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "de_DE"))
+            .filter { $0.isLetter || $0.isNumber }
     }
 }
 
-/// Active items of the medication plan (GET /v1/medication-plan, cached).
+/// Active items of the medication plan (GET /v1/medication-plan, cached for
+/// offline use), matched by name and synonyms.
 struct MedicationQuery: EntityStringQuery {
     init() {}
 
@@ -152,8 +191,29 @@ struct MedicationQuery: EntityStringQuery {
     }
 
     func entities(matching string: String) async throws -> [MedicationEntity] {
-        let needle = string.lowercased()
-        return await LogIntentRunner.medicationEntities().filter { $0.name.lowercased().contains(needle) }
+        await LogIntentRunner.medicationEntities().filter { $0.matches(string) }
+    }
+}
+
+/// "<Medikament> genommen in BIOS": logs one intake now with the plan dose,
+/// no follow-up questions, exactly like "+" in the app (with plan_item_id;
+/// more than planned is logged too and said). Answer: "Eingetragen: X, heute 2 von 3."
+struct MedicationTakenIntent: AppIntent {
+    static let title: LocalizedStringResource = "Medikament jetzt genommen"
+    static let description = IntentDescription("Trägt eine Einnahme aus dem Medikamentenplan jetzt ein, mit der Dosis aus dem Plan.")
+
+    @Parameter(title: "Medikament")
+    var medication: MedicationEntity
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("\(\.$medication) jetzt genommen")
+    }
+
+    init() {}
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let text = await LogIntentRunner.medicationNow(id: medication.id, name: medication.name)
+        return .result(dialog: "\(text)")
     }
 }
 
@@ -249,7 +309,7 @@ enum LogIntentRunner {
         }
         let today = EventStore.dayString(Date())
         return store.activeItems(on: today).compactMap { item in
-            item.serverID.map { MedicationEntity(id: $0, name: item.name) }
+            item.serverID.map { MedicationEntity(id: $0, name: item.name, aliases: item.aliases ?? []) }
         }
     }
 
@@ -280,6 +340,59 @@ enum LogIntentRunner {
             return (taken ? "\(name) eingetragen." : "\(name) zurückgesetzt.") + progress
         case .queued:
             return "Keine Verbindung. BIOS trägt \(name) nach, sobald die App wieder online ist."
+        case .failed(let message):
+            return "Nicht gespeichert: \(message)."
+        }
+    }
+
+    /// Supplement ticks of today, fresh from the server when online.
+    @MainActor
+    static func supplementTicksToday() async -> Int {
+        let store = SupplementStore.shared
+        await store.flush()
+        await store.refresh()
+        return store.takenCount(on: EventStore.dayString(Date())).taken
+    }
+
+    @MainActor
+    static func clearSupplements(count: Int) async -> String {
+        let outcome = await SupplementStore.shared.setAll(on: EventStore.dayString(Date()), taken: false)
+        let what = count == 1 ? "1 Häkchen" : "\(count) Häkchen"
+        switch outcome {
+        case .synced:
+            return "\(what) von heute entfernt."
+        case .queued:
+            return "\(what) entfernt. Keine Verbindung, BIOS trägt das nach, sobald die App wieder online ist."
+        case .failed(let message):
+            return "Nicht gespeichert: \(message)."
+        }
+    }
+
+    /// One intake of a plan item now with the plan dose (Siri "X genommen").
+    @MainActor
+    static func medicationNow(id: String, name: String, now: Date = Date()) async -> String {
+        let plan = MedicationPlanStore.shared
+        let log = MedicationStore.shared
+        // Fresh list first: the day count is then the server's (like the app counter).
+        await log.flush()
+        await log.refresh()
+        let day = EventStore.dayString(now)
+        var item = plan.allItems.first(where: { $0.serverID == id }) ?? MedicationPlanItem(name: name)
+        item.serverID = id
+        let outcome = await plan.log(item, at: now)
+        switch outcome {
+        case .synced, .queued:
+            let taken = plan.taken(item, on: day)
+            let target = item.target
+            var text = "Eingetragen: \(item.name), heute \(taken) von \(target)"
+            if taken > target {
+                text += ", mehr als geplant"
+            }
+            text += "."
+            if case .queued = outcome {
+                text += " Keine Verbindung, wird nachgereicht, sobald BIOS online ist."
+            }
+            return text
         case .failed(let message):
             return "Nicht gespeichert: \(message)."
         }
@@ -402,10 +515,13 @@ struct BIOSShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: SupplementsResetIntent(),
             phrases: [
+                "Alle Supplements austragen in \(.applicationName)",
+                "Supplements austragen in \(.applicationName)",
                 "Supplements zurücksetzen in \(.applicationName)",
                 "\(.applicationName) Supplements zurücksetzen",
+                "\(.applicationName) alle Supplements austragen",
             ],
-            shortTitle: "Supplements zurücksetzen",
+            shortTitle: "Supplements austragen",
             systemImageName: "arrow.uturn.backward"
         )
         AppShortcut(
@@ -417,12 +533,22 @@ struct BIOSShortcuts: AppShortcutsProvider {
             systemImageName: "arrow.uturn.backward.circle"
         )
         AppShortcut(
+            intent: MedicationTakenIntent(),
+            phrases: [
+                "\(\.$medication) genommen in \(.applicationName)",
+                "\(.applicationName) \(\.$medication) genommen",
+                "\(\.$medication) in \(.applicationName) genommen",
+            ],
+            shortTitle: "Medikament genommen",
+            systemImageName: "cross.case.fill"
+        )
+        AppShortcut(
             intent: LogMedicationIntent(),
             phrases: [
                 "\(\.$medication) in \(.applicationName)",
-                "\(\.$medication) genommen in \(.applicationName)",
+                "\(\.$medication) eintragen in \(.applicationName)",
             ],
-            shortTitle: "Medikament genommen",
+            shortTitle: "Medikament eintragen",
             systemImageName: "cross.case"
         )
         AppShortcut(

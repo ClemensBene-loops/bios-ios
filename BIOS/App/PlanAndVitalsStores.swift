@@ -40,6 +40,10 @@ struct MedicationPlanItem: Identifiable, Codable, Equatable {
     var activeFrom: String?
     var activeTo: String?
     var note: String?
+    /// Other names Siri accepts (ingredient, brand, "Asthma-Spray"); server field
+    /// `aliases`. nil = unknown (older cache or server): the PUT then omits the
+    /// key and the server keeps what it has.
+    var aliases: [String]?
 
     var id: String { serverID ?? localID.uuidString }
 
@@ -63,6 +67,9 @@ struct MedicationPlanItem: Identifiable, Codable, Equatable {
         activeFrom = json.str("active_from")
         activeTo = json.str("active_to")
         note = json.str("note")
+        if json["aliases"] != nil {
+            aliases = json.strings("aliases")
+        }
     }
 
     /// PUT body entry: missing fields are omitted, `per_day` defaults to the times.
@@ -85,7 +92,29 @@ struct MedicationPlanItem: Identifiable, Codable, Equatable {
         if let perDay {
             object["per_day"] = .number(Double(Swift.max(1, Swift.min(12, perDay))))
         }
+        if let aliases {
+            object["aliases"] = .array(Self.cleanAliases(aliases, name: name).map { JSONValue.string($0) })
+        }
         return .object(object)
+    }
+
+    /// Trimmed, without empties, duplicates (case-insensitive) and the name itself,
+    /// at most 10 (same rule as the server).
+    static func cleanAliases(_ list: [String], name: String) -> [String] {
+        var seen: Set<String> = [name.trimmingCharacters(in: .whitespaces).lowercased()]
+        var out: [String] = []
+        for raw in list {
+            let alias = raw.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            guard !alias.isEmpty, alias.count <= 40, !seen.contains(alias.lowercased()) else { continue }
+            seen.insert(alias.lowercased())
+            out.append(alias)
+        }
+        return Array(out.prefix(10))
+    }
+
+    /// Name and synonyms, for Siri matching.
+    var spokenNames: [String] {
+        [name] + (aliases ?? [])
     }
 
     /// "2 Hub": plan dose with unit, nil without a dose.

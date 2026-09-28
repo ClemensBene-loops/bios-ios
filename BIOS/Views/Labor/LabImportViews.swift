@@ -3,7 +3,7 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-// Import from inside the app: "+" -> PDF from Files, a photo from the library
+// Import from inside the app: "Befund importieren" -> PDF from Files, a photo from the library
 // or the camera. Photos and image files become JPEG, PDFs stay PDF. Before the
 // very first upload a one-time notice explains the cloud extraction (stored
 // flag, never shown again). The upload itself: LabStore.upload -> LabUpload.
@@ -21,7 +21,8 @@ enum LabImportNotice {
     static let acceptedKey = "bios.labs.cloudNoticeAccepted"
 }
 
-/// "+" in the toolbar of the Labor tab.
+/// The one import button of the Labor tab (same in Werte and Befunde): a wide
+/// button "Befund importieren" that opens the sources (Dateien, Foto, Kamera).
 struct LabImportMenu: View {
     let select: (LabImportSource) -> Void
 
@@ -45,8 +46,13 @@ struct LabImportMenu: View {
                 }
             }
         } label: {
-            Image(systemName: "plus.circle")
+            Label("Befund importieren", systemImage: "square.and.arrow.down")
+                .font(.body.weight(.semibold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
         }
+        .buttonStyle(.borderedProminent)
+        .tint(BIOSTheme.accent)
         .accessibilityLabel("Befund importieren")
         .accessibilityHint("PDF aus Dateien, Foto auswählen oder aufnehmen")
     }

@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// Tab "Labor": segment "Werte | Befunde", import via "+" (PDF, photo,
-/// camera), upload card on top. Werte = due list, summary chips, groups with
+/// Tab "Labor": segment "Werte | Befunde" with one explaining line each, one
+/// import button for both (PDF, photo, camera), upload card on top; an upload
+/// started in "Werte" switches to "Befunde", where its progress shows. Werte = due list, summary chips, groups with
 /// marker rows (only measured markers); Befunde = documents timeline with the
 /// review step. Lab values never color the body map; a marker only links to
 /// its region neutrally.
@@ -24,6 +25,16 @@ struct LaborView: View {
                 .pickerStyle(.segmented)
                 .accessibilityLabel("Ansicht: Werte oder Befunde")
 
+                Text(currentSegment.explanation)
+                    .font(.footnote)
+                    .foregroundStyle(BIOSTheme.text2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 4)
+
+                LabImportMenu { source in
+                    importRequest = source
+                }
+
                 LabStatusBanner()
 
                 if let phase = store.uploadPhase {
@@ -36,9 +47,9 @@ struct LaborView: View {
                 }
 
                 if currentSegment == .werte {
-                    LaborWerteSection { importRequest = .file }
+                    LaborWerteSection()
                 } else {
-                    LaborBefundeSection { importRequest = .file }
+                    LaborBefundeSection()
                 }
 
                 if let disclaimer = store.overview?.disclaimer {
@@ -65,14 +76,13 @@ struct LaborView: View {
         .navigationDestination(for: LabRoute.self) { route in
             LabRouteView(route: route)
         }
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                LabImportMenu { source in
-                    importRequest = source
-                }
+        .labImport(request: $importRequest)
+        .onChange(of: store.uploadPhase) { _, phase in
+            // The progress and the new document live in "Befunde".
+            if phase?.isRunning == true, currentSegment == .werte {
+                withAnimation { segment = LaborSegment.befunde.rawValue }
             }
         }
-        .labImport(request: $importRequest)
         .refreshable {
             await store.refresh(force: true)
         }
@@ -119,6 +129,16 @@ enum LaborSegment: String, CaseIterable {
         switch self {
         case .werte: return "Werte"
         case .befunde: return "Befunde"
+        }
+    }
+
+    /// One line under the segment control.
+    var explanation: String {
+        switch self {
+        case .werte:
+            return "Alle einzelnen Laborwerte über die Zeit."
+        case .befunde:
+            return "Deine Dokumente (Blutbild, Arztbrief, Schlafmessung). Jeder Upload landet hier und liefert, wenn möglich, Werte."
         }
     }
 }
@@ -200,7 +220,6 @@ struct LabStandLine: View {
 /// Segment "Werte": due card, summary chips, groups with marker rows, empty state.
 struct LaborWerteSection: View {
     @ObservedObject private var store = LabStore.shared
-    let importAction: () -> Void
 
     var body: some View {
         let overview = store.overview
@@ -217,7 +236,7 @@ struct LaborWerteSection: View {
                     LabGroupSection(group: group)
                 }
             } else if overview != nil || store.lastError == nil {
-                LabEmptyState(importAction: importAction)
+                LabEmptyState()
             }
         }
     }
@@ -432,9 +451,8 @@ struct LabMarkerRow: View {
     }
 }
 
-/// No confirmed values yet: explanation and the import button.
+/// No confirmed values yet: explanation (the import button sits above).
 struct LabEmptyState: View {
-    let importAction: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -448,17 +466,10 @@ struct LabEmptyState: View {
                 Text("Noch keine Laborwerte")
                     .font(.headline)
             }
-            Text("Lade einen Befund als PDF oder Foto hoch, oder teile ihn aus einer anderen App über \"Teilen\" > BIOS. Der Server erkennt die Werte, du prüfst sie, erst dann erscheinen sie hier mit Referenzbereich und Verlauf. Nie gemessene Marker werden nicht angezeigt.")
+            Text("Lade oben mit \"Befund importieren\" ein PDF oder Foto hoch, oder teile es aus einer anderen App über \"Teilen\" > BIOS. Der Server erkennt die Werte, du prüfst sie, erst dann erscheinen sie unter Werte mit Referenzbereich und Verlauf. Nie gemessene Marker werden nicht angezeigt.")
                 .font(.subheadline)
                 .foregroundStyle(BIOSTheme.text2)
                 .fixedSize(horizontal: false, vertical: true)
-            Button(action: importAction) {
-                Label("Befund importieren", systemImage: "square.and.arrow.down")
-                    .font(.body.weight(.semibold))
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(BIOSTheme.accent)
         }
         .biosCard()
     }

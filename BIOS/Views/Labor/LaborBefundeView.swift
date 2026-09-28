@@ -80,7 +80,6 @@ struct LabReviewBanner: View {
 /// Segment "Befunde".
 struct LaborBefundeSection: View {
     @ObservedObject private var store = LabStore.shared
-    let importAction: () -> Void
     @State private var filter = "alle"
 
     var body: some View {
@@ -107,7 +106,7 @@ struct LaborBefundeSection: View {
 
             if documents.isEmpty {
                 if store.documentsResponse != nil || store.lastError == nil {
-                    LabEmptyState(importAction: importAction)
+                    LabEmptyState()
                 }
             } else {
                 filterChips(documents)
@@ -116,8 +115,8 @@ struct LaborBefundeSection: View {
 
             LabInfoLine(
                 symbol: "square.and.arrow.up",
-                text: "Befunde importieren",
-                detail: "\"+\" oben rechts, \"Teilen\" > BIOS aus Mail oder Dateien, oder am PC in den Ordner labs/inbox legen."
+                text: "Weitere Wege",
+                detail: "Außer \"Befund importieren\" oben: \"Teilen\" > BIOS aus Mail oder Dateien, oder am PC in den Ordner labs/inbox legen."
             )
         }
     }
