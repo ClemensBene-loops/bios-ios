@@ -43,7 +43,7 @@ to the public.</p>
 accessed with the operator's explicit authorisation via the official WHOOP API.</li>
 <li><strong>The operator's own medical device data</strong>: continuous glucose monitoring,
 insulin pump and Loop data, and blood pressure readings.</li>
-<li><strong>Google user data</strong>, limited to two Google Calendar scopes (see below).</li>
+<li><strong>Google user data</strong>, limited to three Google Calendar scopes (see below).</li>
 <li>Public environmental data (wastewater surveillance, pollen forecasts), which contains
 no personal data.</li>
 </ul>
@@ -58,6 +58,14 @@ other calendar.</li>
 <li><code>calendar.freebusy</code>: BIOS reads only busy/free time ranges, without titles,
 descriptions, attendees, locations or any other event details. It uses them solely to
 avoid sending notifications during meetings.</li>
+<li><code>calendar.events.readonly</code>: BIOS reads the events of the operator's primary
+calendar for the coming three weeks (read-only) solely to recognise travel destinations,
+for example a flight to Frankfurt or a weekend in Kitzbühel. It keeps only the derived
+destination city and travel dates, never event titles, descriptions, attendees or other
+details, and never reads any other calendar. Place names that are not in BIOS's built-in
+list, and the coordinates of the destinations, are looked up with the Open-Meteo
+geocoding and pollen services (only the place name or coordinates, no other event
+data).</li>
 </ul>
 <p>Google user data is used only to provide these features to the operator. It is not
 sold, not used for advertising, not used to build profiles, not used to develop, improve
