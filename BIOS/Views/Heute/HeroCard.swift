@@ -44,6 +44,9 @@ struct HeroCard: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .font(.title3.bold())
+                    if let label = infection?.abatingLabel {
+                        TrendPill(text: label)
+                    }
                     if let subline = infection?.subline {
                         Text(subline)
                             .font(.subheadline)
@@ -167,6 +170,7 @@ struct HeroCard: View {
     private var accessibilityText: String {
         guard let infection else { return "Infekt-Check, noch keine Daten" }
         var parts = ["Infekt-Check: \(infection.headline)"]
+        if let label = infection.abatingLabel { parts.append(label) }
         if let score = infection.score {
             parts.append("Infekt-Score \(BIOSFormat.number(score)) von 100, \(infection.scoreLevelKey ?? infection.scoreLevel.fallbackWord)")
         } else if let recovery = infection.recovery {

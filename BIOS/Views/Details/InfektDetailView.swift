@@ -69,6 +69,10 @@ struct InfektSummaryCard: View {
                     Text(checkedText(zone: zone))
                         .font(.subheadline)
                         .foregroundStyle(BIOSTheme.text2)
+                    if let label = infection?.abatingLabel {
+                        TrendPill(text: label)
+                            .padding(.top, 2)
+                    }
                 }
             }
             .accessibilityElement(children: .combine)
@@ -77,6 +81,15 @@ struct InfektSummaryCard: View {
                 .font(.subheadline)
                 .foregroundStyle(infection?.alerts.isEmpty == false ? BIOSTheme.text1 : BIOSTheme.text2)
                 .fixedSize(horizontal: false, vertical: true)
+
+            if infection?.abatingLabel != nil, let trend = infection?.trendSubline,
+               infection?.alerts.isEmpty == false {
+                // The alert texts above stay the check's; this says where the day stands.
+                Text(trend)
+                    .font(.subheadline)
+                    .foregroundStyle(BIOSTheme.text2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             if let note = infection?.confounderNote {
                 ContextLine(symbol: "wineglass", title: note, detail: nil, style: .neutral)

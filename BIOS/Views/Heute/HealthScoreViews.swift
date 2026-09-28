@@ -151,11 +151,33 @@ struct InfektCheckCompactCard: View {
         let tone = infection?.tone ?? .unknown
         NavigationLink(value: DetailRoute.infekt) {
             VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text("Infekt-Check")
-                        .font(.title3.bold())
-                    Spacer()
-                    StatusPill(tone: tone, text: pillText(infection))
+                if let label = infection?.abatingLabel {
+                    // Alarm pill stays; "klingt ab" beside it, or below when the row is too narrow.
+                    ViewThatFits(in: .horizontal) {
+                        HStack {
+                            Text("Infekt-Check")
+                                .font(.title3.bold())
+                            Spacer()
+                            TrendPill(text: label)
+                            StatusPill(tone: tone, text: pillText(infection))
+                        }
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Infekt-Check")
+                                    .font(.title3.bold())
+                                Spacer()
+                                StatusPill(tone: tone, text: pillText(infection))
+                            }
+                            TrendPill(text: label)
+                        }
+                    }
+                } else {
+                    HStack {
+                        Text("Infekt-Check")
+                            .font(.title3.bold())
+                        Spacer()
+                        StatusPill(tone: tone, text: pillText(infection))
+                    }
                 }
                 HStack(alignment: .center, spacing: 12) {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -254,6 +276,27 @@ struct StatusPill: View {
         case .info: return BIOSTheme.midText
         case .ok, .unknown: return tone.tint
         }
+    }
+}
+
+/// Calm pill "klingt ab" next to the alarm pill: the alarm is still active,
+/// but the newest scored day is calm (server field `trend`, display only).
+struct TrendPill: View {
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "arrow.down.right")
+                .font(.caption.weight(.bold))
+            Text(text)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+        }
+        .foregroundStyle(BIOSTheme.good)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(BIOSTheme.good.opacity(0.14), in: Capsule())
+        .accessibilityElement(children: .combine)
     }
 }
 

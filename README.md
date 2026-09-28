@@ -40,7 +40,10 @@ symbol or text, Dynamic Type and VoiceOver labels, no third-party dependencies
 
 - **Heute**: Gesundheits-Score card (see below), Körperkarte card, compact
   Infekt-Check (score, status pill, 7-day sparkline, temperature) and "Deine
-  Routine". A server without the `health` block gets the build 5 layout: hero card
+  Routine". While an infection alarm is still active but the newest scored day is calm,
+  the server sends `infection.trend` `abklingend`; the card, the hero and the
+  Infekt-Check detail then add a calm green pill "klingt ab" (`trend_label`)
+  next to the alarm, which itself stays (display only). A server without the `health` block gets the build 5 layout: hero card
   with the infection score ring (0 to 100, server levels niedrig/mittel/hoch),
   status line ("Alles im Rahmen", "Frühzeichen", "Infektmuster Tag 3") and
   deviation chips of the day, plus the Körperkarte card and the quick status row.

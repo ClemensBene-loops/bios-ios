@@ -366,6 +366,13 @@ struct InfectionModel {
     let envContext: String?
     /// "37,8 °C gemessen heute 07:40" (temperature entered in the app, only context).
     let temperatureContext: String?
+    /// "abklingend" while an infekt/infekt_frueh alarm is still active but the newest
+    /// scored day is calm (server rule, display only; the alarm itself stays).
+    let trend: String?
+    /// "klingt ab": text of the calm pill next to the alarm pill.
+    let trendLabel: String?
+    /// "Heute unauffällig, Muster klingt ab. ..." (also sent as `subline`).
+    let trendSubline: String?
 
     init(json: JSONValue) {
         day = json.str("day")
@@ -397,6 +404,9 @@ struct InfectionModel {
         scoreParts = ScorePart.list(json["score_parts"] ?? json.obj("score")?["parts"])
         envContext = json.str("env_context") ?? json.obj("env_context")?.str("text")
         temperatureContext = json.str("temperature_context") ?? json.obj("temperature_context")?.str("text")
+        trend = json.str("trend")
+        trendLabel = json.str("trend_label")
+        trendSubline = json.str("trend_subline")
         if let headline = json.str("headline") {
             self.headline = headline
         } else {
@@ -411,6 +421,12 @@ struct InfectionModel {
 }
 
 extension InfectionModel {
+    /// Label of the calm "klingt ab" pill, nil when the server sends no trend.
+    var abatingLabel: String? {
+        guard trend == "abklingend" else { return nil }
+        return trendLabel ?? "klingt ab"
+    }
+
     /// The one color mapping of the Infekt-Check (Heute card pill, hero,
     /// detail, chips), as a BIOSStatus so `.tint`, `.glow` and `.symbol` apply:
     /// - `.warn` (red): an active `infekt` alarm or Infekt-Score level high.
