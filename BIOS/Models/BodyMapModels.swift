@@ -1,0 +1,345 @@
+import CoreGraphics
+import Foundation
+
+// View models for `GET /v1/bodymap` and the dashboard block `bodymap`.
+// Lenient like the dashboard: unknown status -> keine_daten, missing fields
+// get defaults, unknown detail links are dropped, region geometry falls back
+// to the bundled layout (BodyMapShapes.swift). Observation only.
+
+/// Status of a region or metric.
+enum BodyMapStatus: String, CaseIterable, Hashable {
+    case ok
+    case beobachten
+    case auffaellig
+    case keineDaten = "keine_daten"
+
+    /// Server key; anything unknown (or missing) is `.keineDaten`.
+    init(key: String?) {
+        let value = (key ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            .replacingOccurrences(of: "ä", with: "ae")
+            .replacingOccurrences(of: " ", with: "_")
+        self = BodyMapStatus(rawValue: value) ?? .keineDaten
+    }
+
+    /// Sort order of the region list: auffällig first, keine Daten last.
+    var rank: Int {
+        switch self {
+        case .auffaellig: return 0
+        case .beobachten: return 1
+        case .ok: return 2
+        case .keineDaten: return 3
+        }
+    }
+}
+
+/// One value in the region sheet.
+struct BodyMapMetric: Identifiable {
+    let id: String
+    let key: String
+    let label: String
+    let value: Double?
+    let unit: String?
+    let delta: Double?
+    let deltaUnit: String?
+    let display: String?
+    let status: BodyMapStatus
+    /// Server `status_label` (e.g. "Unklar" for keine_daten), else the app word.
+    let statusLabel: String
+
+    init?(json: JSONValue, index: Int) {
+        guard json.objectValue != nil else { return nil }
+        key = json.str("key") ?? "metric"
+        id = "\(index)_\(key)"
+        label = json.str("label") ?? key
+        value = json.double("value")
+        unit = json.str("unit")
+        delta = json.double("delta")
+        deltaUnit = json.str("delta_unit")
+        display = json.str("display")
+        status = BodyMapStatus(key: json.str("status"))
+        statusLabel = BodyMapStatus(rawValue: json.str("status") ?? "") != nil
+            ? (json.str("status_label") ?? status.label) : status.label
+    }
+
+    private static func digits(_ number: Double) -> Int {
+        (number * 10).rounded() == (number.rounded() * 10) ? 0 : 1
+    }
+
+    /// "16,4 /min", "82 %", nil without a value.
+    var valueText: String? {
+        guard let value else { return nil }
+        let number = BIOSFormat.number(value, digits: Self.digits(value))
+        guard let unit else { return number }
+        return number + " " + unit
+    }
+
+    /// Second line: the server's ready text, else the delta ("+1,4 /min").
+    var detailText: String? {
+        if let display, display != valueText { return display }
+        if display == nil, let delta {
+            let text = BIOSFormat.signed(delta, digits: Self.digits(delta))
+            return deltaUnit.map { text + " " + $0 } ?? text
+        }
+        return nil
+    }
+
+    var spokenLabel: String {
+        var parts = [label]
+        if let valueText { parts.append(valueText) }
+        if let detailText { parts.append(detailText) }
+        parts.append(statusLabel == status.label ? status.spoken : statusLabel.lowercased())
+        return parts.joined(separator: ", ")
+    }
+}
+
+/// Button in the sheet to an existing detail screen.
+struct BodyMapLink: Identifiable {
+    let id: String
+    let route: DetailRoute
+    let label: String
+
+    init?(json: JSONValue, index: Int) {
+        guard let detail = json.str("detail"), let route = DetailRoute(pushValue: detail) else { return nil }
+        self.route = route
+        id = "\(index)_\(route.rawValue)"
+        label = json.str("label") ?? route.title
+    }
+}
+
+struct BodyMapRegion: Identifiable {
+    let id: String
+    let label: String
+    let side: BodyMapSide
+    let status: BodyMapStatus
+    let statusLabel: String
+    let reason: String
+    let neutral: Bool
+    /// Badge position (normalized), nil = no badge.
+    let badge: CGPoint?
+    let shapes: [BodyMapEllipse]
+    let metrics: [BodyMapMetric]
+    let links: [BodyMapLink]
+
+    /// `useLayout`: fall back to the bundled systems layout for missing
+    /// geometry. Off for other layers (muscles): any region id is rendered
+    /// from the server's own `shapes` / `anchor` / `label`.
+    init?(json: JSONValue, useLayout: Bool = true) {
+        guard let id = json.str("id") else { return nil }
+        let layout = useLayout ? BodyMapLayout.region(id) : nil
+        self.id = id
+        label = json.str("label") ?? BodyMapStyle.regionLabel(id)
+        side = json.str("view").map { BodyMapSide(key: $0) } ?? layout?.side ?? .front
+        status = BodyMapStatus(key: json.str("status"))
+        // The server label belongs to the server status; for an unknown status the app word.
+        statusLabel = BodyMapStatus(rawValue: json.str("status") ?? "") != nil
+            ? (json.str("status_label") ?? status.label) : status.label
+        reason = json.str("reason") ?? BodyMapStyle.noReason
+        neutral = json.flag("neutral")
+        let serverShapes = json.list("shapes").compactMap(Self.ellipse)
+        shapes = serverShapes.isEmpty ? (layout?.shapes ?? []) : serverShapes
+        badge = json.obj("anchor").flatMap(Self.point) ?? layout?.badge
+        metrics = json.list("metrics").enumerated().compactMap { BodyMapMetric(json: $0.element, index: $0.offset) }
+        links = json.list("links").enumerated().compactMap { BodyMapLink(json: $0.element, index: $0.offset) }
+    }
+
+    /// Region from the bundled layout only (Heute mini figure without a loaded map).
+    init(layout: BodyMapLayout.Region, status: BodyMapStatus, reason: String? = nil) {
+        id = layout.id
+        label = BodyMapStyle.regionLabel(layout.id)
+        side = layout.side
+        self.status = status
+        statusLabel = status.label
+        self.reason = reason ?? BodyMapStyle.noReason
+        neutral = false
+        badge = layout.badge
+        shapes = layout.shapes
+        metrics = []
+        links = []
+    }
+
+    /// "Lunge, beobachten: Atemfrequenz erhöht (+1,4 /min)."
+    var spokenLabel: String {
+        "\(label), \(statusLabel == status.label ? status.spoken : statusLabel.lowercased()): \(reason)"
+    }
+
+    private static func unit(_ value: Double?) -> CGFloat? {
+        guard let value, value >= 0, value <= 1 else { return nil }
+        return CGFloat(value)
+    }
+
+    private static func ellipse(_ json: JSONValue) -> BodyMapEllipse? {
+        guard let cx = unit(json.double("cx")), let cy = unit(json.double("cy")),
+              let rx = unit(json.double("rx")), let ry = unit(json.double("ry")),
+              rx > 0, ry > 0 else { return nil }
+        return BodyMapEllipse(cx: cx, cy: cy, rx: rx, ry: ry)
+    }
+
+    private static func point(_ json: JSONValue) -> CGPoint? {
+        guard let x = unit(json.double("x")), let y = unit(json.double("y")) else { return nil }
+        return CGPoint(x: x, y: y)
+    }
+}
+
+/// Counts per status (neutral regions count as keine_daten).
+struct BodyMapCounts: Equatable {
+    var ok = 0
+    var beobachten = 0
+    var auffaellig = 0
+    var keineDaten = 0
+
+    init(ok: Int = 0, beobachten: Int = 0, auffaellig: Int = 0, keineDaten: Int = 0) {
+        self.ok = ok
+        self.beobachten = beobachten
+        self.auffaellig = auffaellig
+        self.keineDaten = keineDaten
+    }
+
+    init(json: JSONValue?) {
+        ok = max(0, json?.int("ok") ?? 0)
+        beobachten = max(0, json?.int("beobachten") ?? 0)
+        auffaellig = max(0, json?.int("auffaellig") ?? 0)
+        keineDaten = max(0, json?.int("keine_daten") ?? 0)
+    }
+
+    init(regions: [BodyMapRegion]) {
+        for region in regions {
+            switch region.status {
+            case .ok: ok += 1
+            case .beobachten: beobachten += 1
+            case .auffaellig: auffaellig += 1
+            case .keineDaten: keineDaten += 1
+            }
+        }
+    }
+
+    var attention: Int { beobachten + auffaellig }
+
+    /// "2 beobachten, 1 auffällig", "alles im Rahmen", "3 Regionen ohne Daten".
+    var spoken: String {
+        if attention == 0 {
+            return ok > 0 ? BodyMapStyle.allOk.lowercased() : "\(keineDaten) Regionen ohne Daten"
+        }
+        var parts: [String] = []
+        if beobachten > 0 { parts.append("\(beobachten) beobachten") }
+        if auffaellig > 0 { parts.append("\(auffaellig) auffällig") }
+        return parts.joined(separator: ", ")
+    }
+}
+
+/// Dashboard block `bodymap` (Heute card) and `summary` of the map.
+struct BodyMapSummaryModel {
+    struct Top {
+        let id: String
+        let label: String
+        let status: BodyMapStatus
+        let reason: String?
+    }
+
+    let counts: BodyMapCounts
+    let text: String
+    let top: Top?
+    let generatedAt: Date?
+
+    init(json: JSONValue) {
+        counts = BodyMapCounts(json: json.obj("counts"))
+        text = json.str("text") ?? counts.spoken
+        top = json.obj("top").flatMap { top -> Top? in
+            guard let id = top.str("id") else { return nil }
+            return Top(
+                id: id,
+                label: top.str("label") ?? BodyMapStyle.regionLabel(id),
+                status: BodyMapStatus(key: top.str("status")),
+                reason: top.str("reason")
+            )
+        }
+        generatedAt = BIOSDate.parse(json.str("generated_at"))
+    }
+}
+
+/// One layer of the body map (segmented control under the figure). The
+/// server may list them in `layers` (strings or objects `{id, label}`);
+/// without it the app offers Systeme and Muskeln.
+struct BodyMapLayerOption: Identifiable, Hashable {
+    /// Layer of the plain `GET /v1/bodymap` (no `layer` parameter).
+    static let systemsID = "systems"
+    static let musclesID = "muscles"
+
+    static let defaults = [
+        BodyMapLayerOption(id: systemsID, label: BodyMapStyle.layerLabel(systemsID)),
+        BodyMapLayerOption(id: musclesID, label: BodyMapStyle.layerLabel(musclesID)),
+    ]
+
+    let id: String
+    let label: String
+
+    var isSystems: Bool { id == Self.systemsID }
+
+    init(id: String, label: String) {
+        self.id = id
+        self.label = label
+    }
+
+    init?(json: JSONValue) {
+        if let raw = json.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
+            let id = raw.lowercased()
+            self.init(id: id, label: BodyMapStyle.layerLabel(id))
+            return
+        }
+        guard let raw = json.str("id") ?? json.str("key") ?? json.str("layer") else { return nil }
+        let id = raw.lowercased()
+        self.init(id: id, label: json.str("label") ?? BodyMapStyle.layerLabel(id))
+    }
+
+    /// Server list (deduplicated), else the defaults.
+    static func list(_ json: [JSONValue]) -> [BodyMapLayerOption] {
+        var seen = Set<String>()
+        let parsed = json.compactMap { BodyMapLayerOption(json: $0) }.filter { seen.insert($0.id).inserted }
+        return parsed.isEmpty ? defaults : parsed
+    }
+}
+
+/// `GET /v1/bodymap`.
+struct BodyMapModel {
+    let schemaVersion: Int?
+    let generatedAt: Date?
+    /// `layer` of the response (nil = older server: systems).
+    let layer: String?
+    /// Invented example values (`demo: true`, requested with `demo=1`).
+    let demo: Bool
+    /// `layers` of the response, nil when the server sends none.
+    let layers: [BodyMapLayerOption]?
+    let note: String
+    let regions: [BodyMapRegion]
+    let summary: BodyMapSummaryModel?
+    let errors: [String]
+    /// `overview[]` (muscles layer): metrics in the region format for a header row.
+    let overview: [BodyMapMetric]
+
+    init(json: JSONValue) {
+        schemaVersion = json.int("schema_version")
+        generatedAt = BIOSDate.parse(json.str("generated_at"))
+        layer = json.str("layer")?.lowercased()
+        demo = json.flag("demo")
+        let rawLayers = json.list("layers")
+        layers = rawLayers.isEmpty ? nil : BodyMapLayerOption.list(rawLayers)
+        note = json.str("note") ?? BodyMapStyle.note
+        let useLayout = (layer ?? BodyMapLayerOption.systemsID) == BodyMapLayerOption.systemsID
+        var seen = Set<String>()
+        regions = json.list("regions").compactMap { BodyMapRegion(json: $0, useLayout: useLayout) }
+            .filter { seen.insert($0.id).inserted }
+        summary = json.obj("summary").map { BodyMapSummaryModel(json: $0) }
+        errors = json.strings("errors")
+        overview = json.list("overview").enumerated().compactMap { BodyMapMetric(json: $0.element, index: $0.offset) }
+    }
+
+    var isSystems: Bool {
+        (layer ?? BodyMapLayerOption.systemsID) == BodyMapLayerOption.systemsID
+    }
+
+    /// Region list order: auffällig, beobachten, ok, keine Daten; server order within a status.
+    var sortedRegions: [BodyMapRegion] {
+        regions.enumerated()
+            .sorted { ($0.element.status.rank, $0.offset) < ($1.element.status.rank, $1.offset) }
+            .map(\.element)
+    }
+}

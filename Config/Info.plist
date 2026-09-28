@@ -29,8 +29,22 @@
 		<key>UIApplicationSupportsMultipleScenes</key>
 		<false/>
 	</dict>
+	<!-- Static launch screen = first frame of the splash (Brand.swift): the
+	     icon green from the LaunchBackground color asset, no image (the mark
+	     fades in afterwards), so there is no flash between the two. -->
 	<key>UILaunchScreen</key>
-	<dict/>
+	<dict>
+		<key>UIColorName</key>
+		<string>LaunchBackground</string>
+	</dict>
+	<!-- v2 is dark first (approved mockup): fixed app-wide from launch, also for
+	     system sheets and the launch screen, no light flash. -->
+	<!-- Live Activity (views in the BIOSWidgets extension). No
+	     NSSupportsLiveActivitiesFrequentUpdates: a few updates per day. -->
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>UIUserInterfaceStyle</key>
+	<string>Dark</string>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

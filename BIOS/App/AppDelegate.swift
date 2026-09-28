@@ -23,6 +23,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         UNUserNotificationCenter.current().delegate = notificationDelegate
         registerNotificationCategories()
         requestAuthorizationAndRegister()
+        // Early, so a Live Activity started by push (iOS 17.2+) delivers its
+        // update token even when the system launches the app in the background.
+        LiveActivityController.shared.startObserving()
         return true
     }
 
@@ -35,6 +38,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
             ("WHOOP_CLEAR", "%u weitere Whoop-Meldungen"),
             ("OUTLOOK_ALERT", "%u weitere Ausblick-Meldungen"),
             ("OUTLOOK_WEEKLY", "%u weitere Ausblick-Meldungen"),
+            // Heartbeat warnings/Entwarnung and the test push (thread "system", tab Mehr)
+            ("SYSTEM_ALERT", "%u weitere System-Meldungen"),
         ]
         var categories = Set<UNNotificationCategory>()
         for definition in definitions {

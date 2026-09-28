@@ -1,9 +1,10 @@
 name: 3. Create Certificates
 run-name: Create Certificates (${{ github.ref_name }})
 
-# Apple-side change: creates the App Store provisioning profile for
-# at.bene.bios and stores it in Match-Secrets. REUSES the distribution
-# certificate shared with Loop; never creates, renews or revokes certificates.
+# Apple-side change: creates the App Store provisioning profiles for
+# at.bene.bios and at.bene.bios.widgets (only the missing ones) and stores
+# them in Match-Secrets. REUSES the distribution certificate shared with Loop;
+# never creates, renews or revokes certificates.
 # Deliberately no nuke job (unlike LoopWorkspace). Manual only.
 on:
   workflow_dispatch:

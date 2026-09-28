@@ -18,7 +18,12 @@ struct PushInfo: Equatable, Sendable {
     let threadID: String
     /// APNs `category`; empty if none.
     let category: String
-    /// Custom top-level payload keys (everything except `aps`), stringified.
+    /// `bios.tab` of the payload ("heute", "koerper", "umwelt", "mehr"), if any.
+    let biosTab: String?
+    /// `bios.detail` of the payload ("infekt", "viren", ...), if any.
+    let biosDetail: String?
+    /// Custom payload keys (everything except `aps`) as strings; nested
+    /// objects are flattened to "bios.tab", "bios.kind", ...
     let userInfo: [String: String]
     let date: Date
 
@@ -27,26 +32,55 @@ struct PushInfo: Equatable, Sendable {
         var custom: [String: String] = [:]
         for (key, value) in content.userInfo {
             guard let name = key as? String, name != "aps" else { continue }
-            custom[name] = String(describing: value)
+            if let nested = value as? [String: Any] {
+                for (subKey, subValue) in nested {
+                    custom["\(name).\(subKey)"] = Self.describe(subValue)
+                }
+            } else {
+                custom[name] = Self.describe(value)
+            }
+        }
+        var tab: String?
+        var detail: String?
+        if let bios = content.userInfo[AnyHashable("bios")] as? [String: Any] {
+            tab = Self.nonEmpty(bios["tab"] as? String)
+            detail = Self.nonEmpty(bios["detail"] as? String)
         }
         self.kind = kind
         self.title = content.title
         self.body = content.body
         self.threadID = content.threadIdentifier
         self.category = content.categoryIdentifier
+        self.biosTab = tab
+        self.biosDetail = detail
         self.userInfo = custom
         self.date = notification.date
     }
 
     init(kind: Kind, title: String, body: String, threadID: String = "",
-         category: String = "", userInfo: [String: String] = [:], date: Date = Date()) {
+         category: String = "", biosTab: String? = nil, biosDetail: String? = nil,
+         userInfo: [String: String] = [:], date: Date = Date()) {
         self.kind = kind
         self.title = title
         self.body = body
         self.threadID = threadID
         self.category = category
+        self.biosTab = biosTab
+        self.biosDetail = biosDetail
         self.userInfo = userInfo
         self.date = date
+    }
+
+    private static func describe(_ value: Any) -> String {
+        if let string = value as? String { return string }
+        if let number = value as? NSNumber { return number.stringValue }
+        return String(describing: value)
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 
@@ -85,8 +119,8 @@ final class AppState: ObservableObject {
     /// Last push received in the foreground or opened by a tap.
     @Published private(set) var lastPush: PushInfo?
 
-    /// Last tapped push, waiting for routing. ContentView consumes it (scrolls
-    /// to the section for its `threadID`, refreshes) and sets it back to nil.
+    /// Last tapped push, waiting for routing. RootView consumes it (switches
+    /// tab, opens the detail, refreshes) and sets it back to nil.
     @Published var pendingOpen: PushInfo?
 
     init() {}
@@ -96,20 +130,5 @@ final class AppState: ObservableObject {
         if push.kind == .opened {
             pendingOpen = push
         }
-    }
-
-    /// Sample state for SwiftUI previews.
-    static func preview() -> AppState {
-        let state = AppState()
-        state.authorization = .granted
-        state.registration = .registered(token: "a1b2c3d4e5f60718293a4b5c6d7e8f90")
-        state.upload = .succeeded(Date())
-        state.record(PushInfo(
-            kind: .received,
-            title: "Infekt-Muster",
-            body: "HRV -18 %, Ruhepuls +6",
-            threadID: "whoop"
-        ))
-        return state
     }
 }
