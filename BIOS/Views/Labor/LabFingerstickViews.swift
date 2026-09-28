@@ -164,7 +164,7 @@ struct LabDeviceChartCard: View {
             Chart {
                 LabTargetBandMarks(xStart: xRange.lowerBound, xEnd: xRange.upperBound,
                                    bandLow: targetBand?.low, bandHigh: targetBand?.high,
-                                   hint: target?.isHint == true, opacity: 0.34)
+                                   hint: target?.isHint == true)
                 ForEach(readings) { reading in
                     LineMark(
                         x: .value("Zeit", reading.date),
@@ -221,8 +221,10 @@ struct LabDeviceChartCard: View {
 
             if let target, targetBand != nil {
                 LegendView(items: [LegendItem(color: LabTargetStyle.band,
-                                              text: "dunkel: " + target.displayLabel(decimals: detail.marker.decimals),
-                                              mark: .box, opacity: target.isHint ? 0.45 : 0.8)])
+                                              text: target.displayLabel(decimals: detail.marker.decimals),
+                                              mark: .box,
+                                              opacity: target.isHint ? LabTargetStyle.legendHint
+                                                  : LabTargetStyle.legendBand)])
             }
 
             Text(note)

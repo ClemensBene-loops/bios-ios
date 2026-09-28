@@ -76,14 +76,32 @@ struct LabTag: View {
     }
 }
 
-/// Colors of the target band ("Zielbereich"): a darker, more saturated green than
-/// the light band of the lab's range; the HbA1c best range is darker still. Outside
-/// the target but inside the lab range is a calm lavender ring, never red.
+/// Colors of the bands, three clearly separated levels on the dark card:
+/// - lab range ("Laborbereich"): subtle, low-opacity green with a faint outline
+///   (luminance about 0.05, like a track),
+/// - target band ("Zielbereich"): vivid saturated green, drawn taller on top
+///   (contrast about 7:1 against the lab band, 10:1 against the empty track),
+/// - HbA1c best range: pale mint inside the target, with a thin dark ring.
+/// Outside the target but inside the lab range is a calm lavender ring, never red.
+/// The history charts use the same colors, translucent (`chart*` opacities).
 enum LabTargetStyle {
-    static let band = Color(hex: 0x178A3E)
-    static let best = Color(hex: 0x0A5A25)
+    static let band = Color(hex: 0x39F27A)
+    static let best = Color(hex: 0xCFFFE0)
     static let outside = BIOSTheme.context
-    static let reference = BIOSTheme.good.opacity(0.30)
+    static let referenceBase = BIOSTheme.good
+    static let reference = BIOSTheme.good.opacity(0.18)
+    static let referenceEdge = BIOSTheme.good.opacity(0.45)
+    /// Opacities of the bands behind the points of the history charts.
+    static let chartReference = 0.15
+    static let chartBand = 0.30
+    static let chartHint = 0.14
+    static let chartBest = 0.55
+    /// Opacities of the chart legend boxes (a bit stronger than the chart, so a
+    /// 10 pt box stays readable).
+    static let legendReference = 0.35
+    static let legendBand = 0.65
+    static let legendHint = 0.35
+    static let legendBest = 0.9
 }
 
 /// One band on the bar; a nil side runs to the bar's edge.
@@ -106,9 +124,9 @@ struct LabBarScale: Equatable {
     let value: Double?
     /// Goal tick, only when no target band is drawn (`adds_over_reference` false).
     let tick: Double?
-    /// Target band (darker green).
+    /// Target band (vivid green, on top).
     let target: LabBarBand?
-    /// HbA1c: best possible range inside the target (darkest).
+    /// HbA1c: best possible range inside the target (pale mint).
     let best: LabBarBand?
 
     /// From a point (z-score scale for spirometry) and an optional target.
@@ -173,12 +191,20 @@ struct LabBarScale: Equatable {
         guard upper > lower else { return 0.5 }
         return CGFloat(min(1, max(0, (x - lower) / (upper - lower))))
     }
+
+    /// Finite bounds of the target band (for ticks and labels under the bar).
+    var targetBounds: [Double] {
+        guard let target else { return [] }
+        return [target.low, target.high].compactMap { $0 }.filter { $0.isFinite }
+    }
 }
 
-/// Reference bar: light band = the lab's range, darker band = the target band
-/// (hatched for a hint), darkest inner band = HbA1c best range, dot = the value
-/// (status color, lavender ring when outside the target but not flagged), white tick
-/// = goal without a band. No band at all = "ohne Referenz" (dashed).
+/// Reference bar: subtle band = the lab's range, vivid taller capsule on top = the
+/// target band (hatched for a hint), pale mint inner band = HbA1c best range, dot =
+/// the value (status color, lavender ring when outside the target but not flagged),
+/// white tick = goal without a band. No band at all = "ohne Referenz" (dashed).
+/// `boundaryTicks` adds small ticks under the target's finite bounds (detail bar,
+/// labelled by `LabBarAxis`).
 struct LabRangeBar: View {
     let scale: LabBarScale?
     let status: LabValueStatus
@@ -186,6 +212,11 @@ struct LabRangeBar: View {
     var dotSize: CGFloat = 10
     /// Inside the lab's range but outside the target: calm ring, never red.
     var outsideTarget = false
+    var boundaryTicks = false
+
+    /// The target capsule is taller than the track and the lab band, so both of its
+    /// edges stay visible where it overlaps the lab band or reaches beyond it.
+    private var targetThickness: CGFloat { height + 4 }
 
     var body: some View {
         GeometryReader { proxy in
@@ -200,20 +231,28 @@ struct LabRangeBar: View {
                     if scale.hasReference {
                         segment(scale, low: scale.bandLow, high: scale.bandHigh, width: width, midY: midY,
                                 thickness: height) {
-                            Capsule().fill(LabTargetStyle.reference)
+                            LabReferenceBandFill()
                         }
                     }
-                    // Inset inside the light band, so both stay visible where they overlap
-                    // (HbA1c: the target reaches beyond the lab's range).
                     if let band = scale.target {
                         segment(scale, low: band.low, high: band.high, width: width, midY: midY,
-                                thickness: scale.hasReference ? max(3, height - 2) : height) {
+                                thickness: targetThickness) {
                             LabTargetBandFill(hint: band.hint)
+                        }
+                        if boundaryTicks {
+                            let top = midY + targetThickness / 2
+                            let length = max(3, proxy.size.height - top)
+                            ForEach(Array(scale.targetBounds.enumerated()), id: \.offset) { _, bound in
+                                Rectangle()
+                                    .fill(LabTargetStyle.band)
+                                    .frame(width: 1.5, height: length)
+                                    .position(x: scale.fraction(bound) * width, y: top + length / 2)
+                            }
                         }
                     }
                     if let best = scale.best {
                         segment(scale, low: best.low, high: best.high, width: width, midY: midY,
-                                thickness: max(2, height - 4)) {
+                                thickness: height) {
                             LabTargetBandFill(best: true)
                         }
                     }
@@ -245,7 +284,7 @@ struct LabRangeBar: View {
                 }
             }
         }
-        .frame(height: max(height + 8, dotSize + 5))
+        .frame(height: max(height + 8, dotSize + 5) + (boundaryTicks ? 4 : 0))
         .accessibilityHidden(true)
     }
 
@@ -261,8 +300,17 @@ struct LabRangeBar: View {
     }
 }
 
-/// Fill of a target band: solid darker green, darkest for the HbA1c best range,
-/// hatched and lighter for a hint (evidence "hinweis").
+/// Fill of the lab's range: subtle low-opacity green with a faint outline.
+struct LabReferenceBandFill: View {
+    var body: some View {
+        Capsule()
+            .fill(LabTargetStyle.reference)
+            .overlay(Capsule().strokeBorder(LabTargetStyle.referenceEdge, lineWidth: 1))
+    }
+}
+
+/// Fill of a target band: solid vivid green; pale mint with a thin dark ring for the
+/// HbA1c best range; hatched with a vivid outline for a hint (evidence "hinweis").
 struct LabTargetBandFill: View {
     var hint = false
     var best = false
@@ -270,11 +318,121 @@ struct LabTargetBandFill: View {
     var body: some View {
         if hint {
             Capsule()
-                .fill(LabTargetStyle.band.opacity(0.25))
-                .overlay(LabHatch().stroke(LabTargetStyle.band, lineWidth: 1).clipShape(Capsule()))
+                .fill(LabTargetStyle.band.opacity(0.16))
+                .overlay(LabHatch().stroke(LabTargetStyle.band.opacity(0.9), lineWidth: 1).clipShape(Capsule()))
+                .overlay(Capsule().strokeBorder(LabTargetStyle.band, lineWidth: 1))
+        } else if best {
+            Capsule()
+                .fill(LabTargetStyle.best)
+                .overlay(Capsule().strokeBorder(BIOSTheme.card, lineWidth: 1))
         } else {
             Capsule()
-                .fill(best ? LabTargetStyle.best : LabTargetStyle.band)
+                .fill(LabTargetStyle.band)
+        }
+    }
+}
+
+/// Legend swatch drawn exactly like the band on the bar.
+struct LabBandSwatch: View {
+    enum Kind {
+        case reference
+        case target
+        case hint
+        /// Best range: mint inside a piece of the target band, as on the bar.
+        case best
+    }
+
+    let kind: Kind
+
+    var body: some View {
+        switch kind {
+        case .reference:
+            LabReferenceBandFill().frame(width: 16, height: 6)
+        case .target:
+            LabTargetBandFill().frame(width: 16, height: 10)
+        case .hint:
+            LabTargetBandFill(hint: true).frame(width: 16, height: 10)
+        case .best:
+            LabTargetBandFill()
+                .frame(width: 18, height: 10)
+                .overlay(LabTargetBandFill(best: true).frame(width: 10, height: 6))
+        }
+    }
+}
+
+/// Axis under the big reference bar: the scale's min and max at the edges (grey)
+/// and the target's finite bounds in green under their ticks. An edge label that
+/// would collide with a target label is dropped; two close bounds share one label.
+struct LabBarAxis: View {
+    let scale: LabBarScale
+    let decimals: Int?
+
+    private struct Mark: Identifiable {
+        let id: Int
+        let fraction: CGFloat
+        let text: String
+        let target: Bool
+    }
+
+    var body: some View {
+        LabAxisLayout {
+            ForEach(marks) { mark in
+                Text(mark.text)
+                    .font(mark.target ? Font.caption2.weight(.semibold) : Font.caption2)
+                    .monospacedDigit()
+                    .foregroundStyle(mark.target ? LabTargetStyle.band : BIOSTheme.text3)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .layoutValue(key: LabAxisFraction.self, value: mark.fraction)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private var marks: [Mark] {
+        let bounds = scale.targetBounds.sorted()
+        let targets: [Mark]
+        if bounds.count == 2, scale.fraction(bounds[1]) - scale.fraction(bounds[0]) < 0.14 {
+            let middle = (scale.fraction(bounds[0]) + scale.fraction(bounds[1])) / 2
+            targets = [Mark(id: 2, fraction: middle,
+                            text: "\(format(bounds[0])) bis \(format(bounds[1]))", target: true)]
+        } else {
+            targets = bounds.enumerated().map { index, bound in
+                Mark(id: 2 + index, fraction: scale.fraction(bound), text: format(bound), target: true)
+            }
+        }
+        var result: [Mark] = []
+        if !targets.contains(where: { $0.fraction < 0.14 }) {
+            result.append(Mark(id: 0, fraction: 0, text: format(scale.lower), target: false))
+        }
+        if !targets.contains(where: { $0.fraction > 0.86 }) {
+            result.append(Mark(id: 1, fraction: 1, text: format(scale.upper), target: false))
+        }
+        return result + targets
+    }
+
+    private func format(_ number: Double) -> String {
+        LabFormat.value(number, decimals: decimals)
+    }
+}
+
+private struct LabAxisFraction: LayoutValueKey {
+    static let defaultValue: CGFloat = 0
+}
+
+/// Places each label centered at its fraction of the width, clamped inside the row.
+private struct LabAxisLayout: Layout {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let height = subviews.map { $0.sizeThatFits(.unspecified).height }.max() ?? 0
+        return CGSize(width: proposal.width ?? 0, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            let center = bounds.minX + subview[LabAxisFraction.self] * bounds.width
+            let x = min(bounds.maxX - size.width, max(bounds.minX, center - size.width / 2))
+            subview.place(at: CGPoint(x: x, y: bounds.minY), anchor: .topLeading, proposal: ProposedViewSize(size))
         }
     }
 }
@@ -295,23 +453,24 @@ struct LabHatch: Shape {
     }
 }
 
-/// Legend line "hell: Laborbereich, dunkel: Zielbereich (Leitlinie)".
+/// Legend line with the same swatches as the bar: "blass: Laborbereich, kräftig
+/// grün: Zielbereich (Leitlinie)".
 struct LabBandLegend: View {
     var body: some View {
-        HStack(spacing: 6) {
-            Capsule()
-                .fill(LabTargetStyle.reference)
-                .frame(width: 14, height: 7)
-            Capsule()
-                .fill(LabTargetStyle.band)
-                .frame(width: 14, height: 7)
-            Text("hell: Laborbereich, dunkel: Zielbereich (Leitlinie)")
-                .font(.caption)
-                .foregroundStyle(BIOSTheme.text2)
-                .fixedSize(horizontal: false, vertical: true)
+        FlowLayout(spacing: 14, lineSpacing: 4) {
+            HStack(spacing: 6) {
+                LabBandSwatch(kind: .reference)
+                Text("blass: Laborbereich")
+            }
+            HStack(spacing: 6) {
+                LabBandSwatch(kind: .target)
+                Text("kräftig grün: Zielbereich (Leitlinie)")
+            }
         }
+        .font(.caption)
+        .foregroundStyle(BIOSTheme.text2)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Legende: helles Band Laborbereich, dunkles Band Zielbereich nach Leitlinie")
+        .accessibilityLabel("Legende: blasses Band Laborbereich, kräftig grünes Band Zielbereich nach Leitlinie")
     }
 }
 
@@ -327,8 +486,7 @@ struct LabTargetInfo: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .center, spacing: 8) {
-                LabTargetBandFill(hint: target.isHint)
-                    .frame(width: 16, height: 8)
+                LabBandSwatch(kind: target.isHint ? .hint : .target)
                     .accessibilityHidden(true)
                 Text(target.displayLabel(decimals: decimals))
                     .font(.subheadline.weight(.semibold))
@@ -342,8 +500,7 @@ struct LabTargetInfo: View {
             .accessibilityElement(children: .combine)
             if let label = target.best?.label {
                 HStack(spacing: 8) {
-                    LabTargetBandFill(best: true)
-                        .frame(width: 16, height: 8)
+                    LabBandSwatch(kind: .best)
                         .accessibilityHidden(true)
                     Text(label.prefix(1).uppercased() + String(label.dropFirst()))
                         .font(.footnote.weight(.medium))
@@ -564,8 +721,9 @@ struct LabSelectionRule: ChartContent {
     }
 }
 
-/// Target band behind the points of a Labor chart: darker green over the whole
-/// width, the HbA1c best range darker inside, a hint band lighter with dashed edges.
+/// Target band behind the points of a Labor chart: the bar's vivid green, translucent,
+/// over the whole width; the HbA1c best range as pale mint inside; a hint band fainter
+/// with dashed edges.
 struct LabTargetBandMarks: ChartContent {
     let xStart: Date
     let xEnd: Date
@@ -575,7 +733,7 @@ struct LabTargetBandMarks: ChartContent {
     var bestHigh: Double? = nil
     var hintEdges: [Double] = []
     var hint = false
-    var opacity = 0.42
+    var opacity = LabTargetStyle.chartBand
 
     var body: some ChartContent {
         if let bandLow, let bandHigh {
@@ -585,7 +743,7 @@ struct LabTargetBandMarks: ChartContent {
                 yStart: .value("Ziel unten", bandLow),
                 yEnd: .value("Ziel oben", bandHigh)
             )
-            .foregroundStyle(LabTargetStyle.band.opacity(hint ? 0.16 : opacity))
+            .foregroundStyle(LabTargetStyle.band.opacity(hint ? LabTargetStyle.chartHint : opacity))
             .accessibilityHidden(true)
         }
         ForEach(hintEdges, id: \.self) { edge in
@@ -601,7 +759,7 @@ struct LabTargetBandMarks: ChartContent {
                 yStart: .value("Bestmöglich unten", bestLow),
                 yEnd: .value("Bestmöglich oben", bestHigh)
             )
-            .foregroundStyle(LabTargetStyle.best.opacity(0.8))
+            .foregroundStyle(LabTargetStyle.best.opacity(LabTargetStyle.chartBest))
             .accessibilityHidden(true)
         }
     }

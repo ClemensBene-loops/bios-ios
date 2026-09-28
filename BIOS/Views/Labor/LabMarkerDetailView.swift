@@ -269,18 +269,11 @@ struct LabValueCard: View {
             .accessibilityLabel(spokenValue)
 
             if scale != nil {
-                VStack(spacing: 4) {
-                    LabRangeBar(scale: scale, status: point.status, height: 8, dotSize: 14, outsideTarget: outside)
+                VStack(spacing: 2) {
+                    LabRangeBar(scale: scale, status: point.status, height: 8, dotSize: 14, outsideTarget: outside,
+                                boundaryTicks: true)
                     if let scale {
-                        HStack {
-                            Text(LabFormat.value(scale.lower, decimals: point.usesZScore ? 0 : marker.decimals))
-                            Spacer()
-                            Text(LabFormat.value(scale.upper, decimals: point.usesZScore ? 0 : marker.decimals))
-                        }
-                        .font(.caption2)
-                        .monospacedDigit()
-                        .foregroundStyle(BIOSTheme.text3)
-                        .accessibilityHidden(true)
+                        LabBarAxis(scale: scale, decimals: point.usesZScore ? 0 : marker.decimals)
                         if scale.target != nil {
                             LabBandLegend()
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -401,7 +394,7 @@ struct LabHistoryChartCard: View {
                         yStart: .value("Referenz unten", band.low),
                         yEnd: .value("Referenz oben", band.high)
                     )
-                    .foregroundStyle(BIOSTheme.good.opacity(0.13))
+                    .foregroundStyle(LabTargetStyle.referenceBase.opacity(LabTargetStyle.chartReference))
                     .accessibilityHidden(true)
                 }
                 LabTargetBandMarks(xStart: xRange.lowerBound, xEnd: xRange.upperBound,
@@ -563,19 +556,22 @@ struct LabHistoryChartCard: View {
             items.append(LegendItem(color: BIOSTheme.glucose, text: "GMI aus CGM, 90 Tage davor", mark: .dashed))
         }
         if hasBand {
-            items.append(LegendItem(color: BIOSTheme.good, text: "hell: Laborbereich", mark: .box, opacity: 0.35))
+            items.append(LegendItem(color: LabTargetStyle.referenceBase, text: "blass: Laborbereich", mark: .box,
+                                    opacity: LabTargetStyle.legendReference))
         }
         if hasTargetBand, let target {
             if target.isHint {
                 items.append(LegendItem(color: LabTargetStyle.band, text: "Hinweis (nur Beobachtungsdaten)", mark: .box,
-                                        opacity: 0.45))
+                                        opacity: LabTargetStyle.legendHint))
             } else {
                 let evidence = target.evidenceText ?? "Leitlinie"
-                items.append(LegendItem(color: LabTargetStyle.band, text: "dunkel: Zielbereich (\(evidence))", mark: .box))
+                items.append(LegendItem(color: LabTargetStyle.band, text: "kräftig grün: Zielbereich (\(evidence))",
+                                        mark: .box, opacity: LabTargetStyle.legendBand))
             }
         }
         if hasBest, let label = target?.best?.label {
-            items.append(LegendItem(color: LabTargetStyle.best, text: label, mark: .box))
+            items.append(LegendItem(color: LabTargetStyle.best, text: label, mark: .box,
+                                    opacity: LabTargetStyle.legendBest))
         }
         if hasTick {
             items.append(LegendItem(color: BIOSTheme.mid, text: "Ziel", mark: .dashed))

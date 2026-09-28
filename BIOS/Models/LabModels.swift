@@ -323,7 +323,7 @@ struct LabTarget: Equatable {
     /// Observational data only (magnesium): drawn hatched and lighter, never called a goal.
     var isHint: Bool { evidence == "hinweis" }
 
-    /// Draw the darker band: skipped only when the server says it matches the lab range.
+    /// Draw the target band: skipped only when the server says it matches the lab range.
     var drawsBand: Bool { addsOverReference != false }
 
     /// Bounds that widen a chart scale (target and best band).

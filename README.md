@@ -331,16 +331,19 @@ Labor" link in its sheet.
   Markers never measured are simply absent. Without values: empty state with an
   explanation and the import button. Out of range is calm yellow, never red.
 - **Zielbereich** (since 2026-09-28, `target` per marker, `Point.in_target`, overview
-  `targets`, group `n_target`/`n_in_target`): inside the reference bar a darker green
-  band = the evidence-based target (an open side runs to the bar edge; the bar domain
-  covers lab range, target and value, so HbA1c/glucose targets beyond the lab range fit),
-  inset so the light lab band stays visible; HbA1c `best` as a darkest inner band;
-  `evidence: "hinweis"` (magnesium) hatched and lighter; `adds_over_reference: false`
+  `targets`, group `n_target`/`n_in_target`): the lab range is a subtle low-opacity
+  green band with a faint outline, the evidence-based target a vivid green capsule drawn
+  on top and 4 pt taller, so both of its edges stay visible where it overlaps or extends
+  beyond the lab band (an open side runs to the bar edge; the bar domain covers lab range,
+  target and value, so HbA1c/glucose targets beyond the lab range fit); the detail bar adds
+  green ticks with labels at the target bounds (grey axis min/max kept unless they
+  collide); HbA1c `best` as a pale mint inner band with a thin dark ring;
+  `evidence: "hinweis"` (magnesium) hatched with a vivid outline; `adds_over_reference: false`
   draws no band, only the white tick. Inside the lab range but `in_target: false`: calm
   lavender ring around the dot and tag "außerhalb Ziel" (never red). Chip
   `targets.label` ("16 von 18 im Zielbereich", counted in the app for older servers),
-  per group "n/m im Ziel", legend line "hell: Laborbereich, dunkel: Zielbereich
-  (Leitlinie)". Detail: same band in the big bar and behind the points of the history
+  per group "n/m im Ziel", legend line with the bar's swatches "blass: Laborbereich",
+  "kräftig grün: Zielbereich (Leitlinie)". Detail: same band in the big bar and behind the points of the history
   chart (also the merged Blutzucker chart); below the value `label` with "im Ziel",
   "außerhalb Ziel" or "knapp außerhalb" (within 5 % of the bound), `why`, risk tier
   label and `note` (LDL, non-HDL, ApoB), evidence tag and `source` as a link to `url`;
