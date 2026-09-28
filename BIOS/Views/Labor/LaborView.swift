@@ -236,6 +236,10 @@ struct LaborWerteSection: View {
             }
             if let overview, overview.hasValues {
                 LabSummaryChips(overview: overview, review: store.review)
+                if overview.labMarkers.contains(where: { $0.target?.drawsBand == true }) {
+                    LabBandLegend()
+                        .padding(.horizontal, 4)
+                }
                 ForEach(overview.groups) { group in
                     LabGroupSection(group: group)
                 }
@@ -323,6 +327,9 @@ struct LabSummaryChips: View {
         let noRef = statuses.filter { $0 == .keineReferenz }.count
         FlowLayout(spacing: 7, lineSpacing: 7) {
             LabTag(text: "\(normal) im Bereich", style: .good, symbol: "checkmark")
+            if let targets = overview.targets, let text = targets.chipText {
+                LabTag(text: text, style: targets.nOutside == 0 ? .good : .context, symbol: "scope")
+            }
             if flagged > 0 {
                 LabTag(text: "\(flagged) außerhalb Ref.", style: .mid, symbol: "arrow.up.arrow.down")
             }
@@ -369,10 +376,14 @@ struct LabGroupSection: View {
         if deviceCount > 0 {
             count = labCount == 0 ? "Messgerät" : count + " · Messgerät"
         }
+        var parts = [count]
         if group.nFlagged > 0 {
-            return "\(count) · \(group.nFlagged) außerhalb"
+            parts.append("\(group.nFlagged) außerhalb Ref.")
         }
-        return count
+        if group.nTarget > 0 {
+            parts.append("\(group.nInTarget)/\(group.nTarget) im Ziel")
+        }
+        return parts.joined(separator: " · ")
     }
 }
 
@@ -427,11 +438,15 @@ struct LabMarkerRow: View {
                     }
                     if let tag = status.tag {
                         LabTag(text: tag, style: LabTag.style(for: status))
+                    } else if showsOutsideTarget {
+                        LabTag(text: marker.target?.isHint == true ? "außerhalb Hinweis" : "außerhalb Ziel",
+                               style: .context)
                     }
                 }
             }
             HStack(spacing: 10) {
-                LabRangeBar(scale: LabBarScale(point: point, target: marker.target), status: status)
+                LabRangeBar(scale: LabBarScale(point: point, target: marker.target), status: status,
+                            outsideTarget: showsOutsideTarget)
                 LabSparkline(values: marker.sparkline.map(\.value), status: status)
             }
         }
@@ -465,12 +480,22 @@ struct LabMarkerRow: View {
         return parts.joined(separator: " · ")
     }
 
+    /// Inside the lab's range (or without one) but outside the target band.
+    private var showsOutsideTarget: Bool {
+        guard marker.target != nil, let point = marker.latest else { return false }
+        return point.inTarget == false && !point.status.isFlagged
+    }
+
     private var spoken: String {
         var text = "\(marker.name): \(valueText) \(marker.latest?.unit ?? marker.unit ?? "")"
         if let status = marker.latest?.status, !status.spoken.isEmpty {
             text += ", \(status.spoken)"
         }
         text += ", \(meta)"
+        if let target = marker.target, let point = marker.latest {
+            text += ". " + target.spokenLine(decimals: marker.decimals, value: point.value, valueText: valueText,
+                                             inTarget: point.inTarget)
+        }
         return text
     }
 }

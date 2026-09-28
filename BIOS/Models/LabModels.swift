@@ -193,6 +193,8 @@ struct LabPoint: Identifiable, Equatable {
     let originGroupLabel: String?
     /// Capillary value (fingerstick or letter "BZ"): never a lab reference.
     let capillary: Bool
+    /// Inside the target band (true), outside (false), undecidable or no band (nil).
+    let inTarget: Bool?
 
     init?(json: JSONValue?, index: Int = 0) {
         guard let json, json.objectValue != nil else { return nil }
@@ -224,6 +226,7 @@ struct LabPoint: Identifiable, Equatable {
         originGroup = json.str("origin_group")
         originGroupLabel = json.str("origin_group_label")
         capillary = json.flag("capillary")
+        inTarget = json["in_target"]?.boolValue
         id = resultID ?? "\(measuredRaw ?? dateRaw ?? "punkt")-\(index)"
     }
 
@@ -242,13 +245,45 @@ struct LabPoint: Identifiable, Equatable {
     }
 }
 
-/// `target` of a marker (therapy goal from the profile, e.g. HbA1c < 7,0 %).
+/// `target` of a marker: the evidence-based target band ("Zielbereich", since
+/// 2026-09-28, from guidelines or the lab profile), e.g. LDL "Ziel unter 70 mg/dL".
+/// Older servers send only `{low, high, unit, status}`; every other field is optional.
+/// Independent of the lab's own reference status.
 struct LabTarget: Equatable {
+    /// HbA1c: the best possible range inside the target ("bestmöglich 6,0 bis 6,5 %").
+    struct Best: Equatable {
+        let low: Double?
+        let high: Double?
+        let label: String?
+    }
+
     let low: Double?
     let high: Double?
     let unit: String?
-    /// "im_ziel", "ueber_ziel", "unter_ziel" or nil.
+    /// "im_ziel", "ueber_ziel", "unter_ziel" or nil (against the newest value).
     let status: String?
+    /// "Ziel unter 70 mg/dL", "Hinweis: ab 0,85 mmol/L".
+    let label: String?
+    let source: String?
+    let url: URL?
+    /// "leitlinie", "konsens", "hinweis".
+    let evidence: String?
+    let evidenceLabel: String?
+    let why: String?
+    /// "moderat", "hoch", "sehr_hoch" (ESC/EAS, LDL, non-HDL, ApoB only).
+    let tier: String?
+    let tierLabel: String?
+    let note: String?
+    /// "evidenz" or "profil".
+    let origin: String?
+    let lowInclusive: Bool
+    let highInclusive: Bool
+    /// true = narrower than usual lab ranges, false = mostly the same (the band is
+    /// skipped, a tick stays), nil = depends on the lab (drawn).
+    let addsOverReference: Bool?
+    /// Glucose, HbA1c in type 1: the target lies partly outside the lab range.
+    let extendsBeyondReference: Bool
+    let best: Best?
 
     init?(json: JSONValue?) {
         guard let json, json.objectValue != nil else { return nil }
@@ -256,11 +291,111 @@ struct LabTarget: Equatable {
         high = json.double("high")
         unit = json.str("unit")
         status = json.str("status")
+        label = json.str("label")
+        source = json.str("source")
+        url = json.str("url").flatMap { raw -> URL? in
+            guard let url = URL(string: raw), let scheme = url.scheme?.lowercased(),
+                  scheme == "https" || scheme == "http" else { return nil }
+            return url
+        }
+        evidence = json.str("evidence")?.lowercased()
+        evidenceLabel = json.str("evidence_label")
+        why = json.str("why")
+        tier = json.str("tier")
+        tierLabel = json.str("tier_label")
+        note = json.str("note")
+        origin = json.str("origin")
+        lowInclusive = json.flag("low_inclusive", fallback: true)
+        highInclusive = json.flag("high_inclusive", fallback: false)
+        addsOverReference = json["adds_over_reference"]?.boolValue
+        extendsBeyondReference = json.flag("extends_beyond_reference")
+        if let raw = json.obj("best"), raw.double("low") != nil || raw.double("high") != nil {
+            best = Best(low: raw.double("low"), high: raw.double("high"), label: raw.str("label"))
+        } else {
+            best = nil
+        }
         if low == nil && high == nil { return nil }
     }
 
-    /// The tick on the reference bar (upper goal first).
+    /// The tick on the reference bar (upper goal first), used when no band is drawn.
     var tick: Double? { high ?? low }
+
+    /// Observational data only (magnesium): drawn hatched and lighter, never called a goal.
+    var isHint: Bool { evidence == "hinweis" }
+
+    /// Draw the darker band: skipped only when the server says it matches the lab range.
+    var drawsBand: Bool { addsOverReference != false }
+
+    /// Bounds that widen a chart scale (target and best band).
+    var scaleBounds: [Double] {
+        [low, high, best?.low, best?.high].compactMap { $0 }.filter(\.isFinite)
+    }
+
+    /// Target band clipped to a visible scale (an open side runs to the edge).
+    func band(in range: ClosedRange<Double>) -> (low: Double, high: Double)? {
+        Self.clip(low: low, high: high, to: range)
+    }
+
+    /// HbA1c best band clipped to a visible scale.
+    func bestBand(in range: ClosedRange<Double>) -> (low: Double, high: Double)? {
+        guard let best, best.low != nil || best.high != nil else { return nil }
+        return Self.clip(low: best.low, high: best.high, to: range)
+    }
+
+    static func clip(low: Double?, high: Double?, to range: ClosedRange<Double>) -> (low: Double, high: Double)? {
+        let clippedLow = max(range.lowerBound, low ?? range.lowerBound)
+        let clippedHigh = min(range.upperBound, high ?? range.upperBound)
+        return clippedHigh > clippedLow ? (clippedLow, clippedHigh) : nil
+    }
+
+    /// In target from `status` (older servers without `Point.in_target`; newest value only).
+    var statusInTarget: Bool? {
+        switch status ?? "" {
+        case "im_ziel": return true
+        case "ueber_ziel", "unter_ziel": return false
+        default: return nil
+        }
+    }
+
+    /// "im Ziel" / "außerhalb Ziel" / "knapp außerhalb" for a point, nil when undecidable.
+    func judgement(inTarget: Bool?, value: Double?) -> String? {
+        guard let inTarget else { return nil }
+        if inTarget { return isHint ? "im Hinweisbereich" : "im Ziel" }
+        if let value, isClose(value) { return "knapp außerhalb" }
+        return isHint ? "außerhalb Hinweisbereich" : "außerhalb Ziel"
+    }
+
+    /// Outside, but within 5 % of the nearest bound (70 against "unter 70").
+    func isClose(_ value: Double) -> Bool {
+        let bounds = [low, high].compactMap { $0 }
+        guard let nearest = bounds.min(by: { abs($0 - value) < abs($1 - value) }) else { return false }
+        return abs(value - nearest) <= max(abs(nearest) * 0.05, 1e-9)
+    }
+
+    /// Label with a fallback for older servers ("Ziel 4,0 bis 6,0 %").
+    func displayLabel(decimals: Int?) -> String {
+        if let label { return label }
+        let range = LabFormat.refRange(low: low, high: high, decimals: decimals, unit: unit) ?? ""
+        return (isHint ? "Hinweis: " : "Ziel ") + range
+    }
+
+    /// VoiceOver: "Ziel unter 70 mg/dL, Wert 70, knapp außerhalb".
+    func spokenLine(decimals: Int?, value: Double?, valueText: String, inTarget: Bool?) -> String {
+        var text = "\(displayLabel(decimals: decimals)), Wert \(valueText)"
+        if let judgement = judgement(inTarget: inTarget, value: value) { text += ", \(judgement)" }
+        return text
+    }
+
+    /// "Leitlinie", "Konsens", "Hinweis (nur Beobachtungsdaten)".
+    var evidenceText: String? {
+        if let evidenceLabel { return evidenceLabel }
+        switch evidence ?? "" {
+        case "leitlinie": return "Leitlinie"
+        case "konsens": return "Konsens"
+        case "hinweis": return "Hinweis (nur Beobachtungsdaten)"
+        default: return nil
+        }
+    }
 
     var statusText: String? {
         switch status ?? "" {
@@ -269,6 +404,55 @@ struct LabTarget: Equatable {
         case "unter_ziel": return "unter Ziel"
         default: return nil
         }
+    }
+
+    /// Target and point unit agree (or one is unknown): band and value share a scale.
+    func matches(unit pointUnit: String?) -> Bool {
+        guard let unit, let pointUnit else { return true }
+        return unit.lowercased() == pointUnit.lowercased()
+    }
+}
+
+/// `targets` of the overview: counts for the chip "7 von 9 im Zielbereich".
+struct LabTargetSummary: Equatable {
+    let nTarget: Int
+    let nInTarget: Int
+    let nOutside: Int
+    let label: String?
+    let riskTier: String?
+    let riskTierLabel: String?
+    let diabetesSince: Int?
+    let note: String?
+
+    init?(json: JSONValue?) {
+        guard let json, json.objectValue != nil else { return nil }
+        nTarget = json.int("n_target") ?? 0
+        nInTarget = json.int("n_in_target") ?? 0
+        nOutside = json.int("n_outside") ?? max(0, nTarget - nInTarget)
+        label = json.str("label")
+        riskTier = json.str("risk_tier")
+        riskTierLabel = json.str("risk_tier_label")
+        diabetesSince = json.int("diabetes_since")
+        note = json.str("note")
+    }
+
+    /// Counted in the app (server without the `targets` block).
+    init(nTarget: Int, nInTarget: Int) {
+        self.nTarget = nTarget
+        self.nInTarget = nInTarget
+        nOutside = max(0, nTarget - nInTarget)
+        label = nil
+        riskTier = nil
+        riskTierLabel = nil
+        diabetesSince = nil
+        note = nil
+    }
+
+    /// "16 von 18 im Zielbereich", nil without any decidable marker.
+    var chipText: String? {
+        if let label { return label }
+        guard nTarget > 0 else { return nil }
+        return "\(nInTarget) von \(nTarget) im Zielbereich"
     }
 }
 
@@ -373,6 +557,9 @@ struct LabGroup: Identifiable, Equatable {
     let region: String?
     let nMarkers: Int
     let nFlagged: Int
+    /// Markers with a decidable `latest.in_target`, and how many of them are inside.
+    let nTarget: Int
+    let nInTarget: Int
     let markers: [LabMarkerEntry]
 
     init?(json: JSONValue) {
@@ -383,6 +570,9 @@ struct LabGroup: Identifiable, Equatable {
         markers = json.list("markers").compactMap { LabMarkerEntry(json: $0) }
         nMarkers = json.int("n_markers") ?? markers.count
         nFlagged = json.int("n_flagged") ?? markers.filter { $0.latest?.status.isFlagged == true }.count
+        let decidable = markers.filter { !$0.isDevice && $0.latest?.inTarget != nil }
+        nTarget = json.int("n_target") ?? decidable.count
+        nInTarget = min(nTarget, json.int("n_in_target") ?? decidable.filter { $0.latest?.inTarget == true }.count)
     }
 }
 
@@ -488,6 +678,9 @@ struct LabOverview: Equatable {
     /// Number of fingerstick readings (device marker), additive.
     let nDeviceValues: Int
     let ownMeasurements: LabOwnMeasurements?
+    /// Chip "7 von 9 im Zielbereich" (`targets`, additive since 2026-09-28; counted
+    /// from the groups when the block is missing, nil without any decidable marker).
+    let targets: LabTargetSummary?
 
     init(json: JSONValue) {
         schemaVersion = json.int("schema_version")
@@ -506,6 +699,13 @@ struct LabOverview: Equatable {
         lastValueOn = json.str("last_value_on")
         nDeviceValues = json.int("n_device_values") ?? 0
         ownMeasurements = LabOwnMeasurements(json: json.obj("own"))
+        if let summary = LabTargetSummary(json: json.obj("targets")) {
+            targets = summary
+        } else {
+            let total = groups.reduce(0) { $0 + $1.nTarget }
+            let inside = groups.reduce(0) { $0 + $1.nInTarget }
+            targets = total > 0 ? LabTargetSummary(nTarget: total, nInTarget: inside) : nil
+        }
     }
 
     var allMarkers: [LabMarkerEntry] {

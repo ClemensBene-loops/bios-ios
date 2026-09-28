@@ -246,6 +246,7 @@ struct LabValueCard: View {
 
     var body: some View {
         let scale = LabBarScale(point: point, target: target)
+        let outside = target != nil && resolvedInTarget == false && !point.status.isFlagged
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(LabFormat.value(point.value, decimals: marker.decimals, comparator: point.comparator, text: point.valueText))
@@ -269,7 +270,7 @@ struct LabValueCard: View {
 
             if scale != nil {
                 VStack(spacing: 4) {
-                    LabRangeBar(scale: scale, status: point.status, height: 8, dotSize: 14)
+                    LabRangeBar(scale: scale, status: point.status, height: 8, dotSize: 14, outsideTarget: outside)
                     if let scale {
                         HStack {
                             Text(LabFormat.value(scale.lower, decimals: point.usesZScore ? 0 : marker.decimals))
@@ -280,6 +281,11 @@ struct LabValueCard: View {
                         .monospacedDigit()
                         .foregroundStyle(BIOSTheme.text3)
                         .accessibilityHidden(true)
+                        if scale.target != nil {
+                            LabBandLegend()
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.top, 2)
+                        }
                     }
                 }
             }
@@ -292,8 +298,20 @@ struct LabValueCard: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+
+            if let target {
+                Rectangle()
+                    .fill(BIOSTheme.separator)
+                    .frame(height: 0.5)
+                LabTargetInfo(target: target, decimals: marker.decimals, inTarget: resolvedInTarget, value: point.value)
+            }
         }
         .biosCard()
+    }
+
+    /// `in_target` of the point; older servers only judge the newest value (`status`).
+    private var resolvedInTarget: Bool? {
+        point.inTarget ?? target?.statusInTarget
     }
 
     private func tagText(_ tag: String) -> String {
@@ -308,6 +326,10 @@ struct LabValueCard: View {
         let value = LabFormat.value(point.value, decimals: marker.decimals, comparator: point.comparator, text: point.valueText)
         var text = "\(marker.name) \(value) \(point.unit ?? marker.unit ?? "")"
         if !point.status.spoken.isEmpty { text += ", \(point.status.spoken)" }
+        if let target {
+            text += ". " + target.spokenLine(decimals: marker.decimals, value: point.value, valueText: value,
+                                             inTarget: resolvedInTarget)
+        }
         return text
     }
 
@@ -319,16 +341,12 @@ struct LabValueCard: View {
             result.append(text)
         } else if let ref = LabFormat.refRange(low: point.refLow, high: point.refHigh, decimals: marker.decimals,
                                                unit: point.unit ?? marker.unit) {
-            result.append("Labor-Referenz \(ref) (grünes Band).")
+            result.append("Labor-Referenz \(ref) (helles Band).")
         } else {
             result.append("Das Labor gibt keinen Referenzbereich an.")
         }
-        if let target {
-            let goal = LabFormat.refRange(low: target.low, high: target.high, decimals: marker.decimals,
-                                          unit: target.unit ?? point.unit ?? marker.unit) ?? ""
-            var text = "Dein Therapieziel \(goal) (weißer Strich)"
-            if let status = target.statusText { text += ": \(status)" }
-            result.append(text + ".")
+        if let target, !target.drawsBand, LabBarScale(point: point, target: target)?.tick != nil {
+            result.append("Das Ziel deckt sich meist mit dem Laborbereich (weißer Strich).")
         }
         if point.converted, let raw = point.valueRaw, let unitRaw = point.unitRaw, unitRaw != point.unit {
             var text = "Im Befund: \(LabFormat.plain(raw)) \(unitRaw)"
@@ -355,14 +373,20 @@ struct LabHistoryChartCard: View {
         let isLast: Bool
         var comparator: String? = nil
         var status: LabValueStatus = .unknown
+        var inTarget: Bool? = nil
     }
 
     var body: some View {
         let labPoints = makeLabPoints()
         let gmiPoints = makeGMIPoints()
-        let tick = detail.target?.tick
-        let yRange = yScale(lab: labPoints, gmi: gmiPoints, tick: tick)
+        let target = chartTarget
+        let yRange = yScale(lab: labPoints, gmi: gmiPoints, target: target)
         let band = referenceBand(in: yRange)
+        let targetBand = target.flatMap { $0.drawsBand ? $0.band(in: yRange) : nil }
+        let bestBand = targetBand == nil ? nil : target?.bestBand(in: yRange)
+        let tick = target.flatMap { $0.drawsBand ? nil : $0.tick }
+        let hint = target?.isHint == true
+        let hintEdges: [Double] = hint ? [target?.low, target?.high].compactMap { $0 }.filter { yRange.contains($0) } : []
         let xRange = xScale(labPoints + gmiPoints)
         let status = detail.latest?.status ?? .unknown
         VStack(alignment: .leading, spacing: 10) {
@@ -380,6 +404,10 @@ struct LabHistoryChartCard: View {
                     .foregroundStyle(BIOSTheme.good.opacity(0.13))
                     .accessibilityHidden(true)
                 }
+                LabTargetBandMarks(xStart: xRange.lowerBound, xEnd: xRange.upperBound,
+                                   bandLow: targetBand?.low, bandHigh: targetBand?.high,
+                                   bestLow: bestBand?.low, bestHigh: bestBand?.high,
+                                   hintEdges: hintEdges, hint: hint)
                 if let tick {
                     RuleMark(y: .value("Ziel", tick))
                         .foregroundStyle(BIOSTheme.mid.opacity(0.75))
@@ -458,9 +486,17 @@ struct LabHistoryChartCard: View {
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Verlauf \(detail.marker.name)")
 
-            LegendView(items: legend(hasGMI: !gmiPoints.isEmpty, hasBand: band != nil, hasTick: tick != nil))
+            LegendView(items: legend(hasGMI: !gmiPoints.isEmpty, hasBand: band != nil, target: target,
+                                     hasTargetBand: targetBand != nil, hasBest: bestBand != nil, hasTick: tick != nil))
         }
         .biosCard()
+    }
+
+    /// The marker's target when it shares the scale of the values (not for z-scores).
+    private var chartTarget: LabTarget? {
+        guard let target = detail.target, let latest = detail.latest, !latest.usesZScore,
+              target.matches(unit: latest.unit) else { return nil }
+        return target
     }
 
     private func makeLabPoints() -> [ChartPoint] {
@@ -468,7 +504,7 @@ struct LabHistoryChartCard: View {
         return usable.enumerated().compactMap { index, point in
             guard let date = point.date, let value = point.value else { return nil }
             return ChartPoint(id: "lab-\(point.id)", date: date, value: value, isLast: index == usable.count - 1,
-                              comparator: point.comparator, status: point.status)
+                              comparator: point.comparator, status: point.status, inTarget: point.inTarget)
         }
     }
 
@@ -492,11 +528,12 @@ struct LabHistoryChartCard: View {
         return (clippedLow, clippedHigh)
     }
 
-    /// Values, GMI and goal; the reference bounds widen the scale only when
-    /// they lie close to the values (a far bound would squash the line).
-    private func yScale(lab: [ChartPoint], gmi: [ChartPoint], tick: Double?) -> ClosedRange<Double> {
+    /// Values, GMI and the target band (with the HbA1c best range); the reference
+    /// bounds widen the scale only when they lie close to the values (a far bound
+    /// would squash the line).
+    private func yScale(lab: [ChartPoint], gmi: [ChartPoint], target: LabTarget?) -> ClosedRange<Double> {
         var values = lab.map(\.value) + gmi.map(\.value)
-        if let tick { values.append(tick) }
+        if let target { values += target.scaleBounds }
         guard let low = values.min(), let high = values.max() else { return 0...1 }
         let span = max(high - low, abs(high) * 0.2, 0.5)
         var lower = low - span * 0.25
@@ -519,13 +556,26 @@ struct LabHistoryChartCard: View {
         return first.addingTimeInterval(-pad)...last.addingTimeInterval(pad)
     }
 
-    private func legend(hasGMI: Bool, hasBand: Bool, hasTick: Bool) -> [LegendItem] {
+    private func legend(hasGMI: Bool, hasBand: Bool, target: LabTarget?, hasTargetBand: Bool, hasBest: Bool,
+                        hasTick: Bool) -> [LegendItem] {
         var items = [LegendItem(color: BIOSTheme.text1, text: "Labor", mark: .line)]
         if hasGMI {
             items.append(LegendItem(color: BIOSTheme.glucose, text: "GMI aus CGM, 90 Tage davor", mark: .dashed))
         }
         if hasBand {
-            items.append(LegendItem(color: BIOSTheme.good, text: "Labor-Referenz", mark: .box, opacity: 0.35))
+            items.append(LegendItem(color: BIOSTheme.good, text: "hell: Laborbereich", mark: .box, opacity: 0.35))
+        }
+        if hasTargetBand, let target {
+            if target.isHint {
+                items.append(LegendItem(color: LabTargetStyle.band, text: "Hinweis (nur Beobachtungsdaten)", mark: .box,
+                                        opacity: 0.45))
+            } else {
+                let evidence = target.evidenceText ?? "Leitlinie"
+                items.append(LegendItem(color: LabTargetStyle.band, text: "dunkel: Zielbereich (\(evidence))", mark: .box))
+            }
+        }
+        if hasBest, let label = target?.best?.label {
+            items.append(LegendItem(color: LabTargetStyle.best, text: label, mark: .box))
         }
         if hasTick {
             items.append(LegendItem(color: BIOSTheme.mid, text: "Ziel", mark: .dashed))
@@ -552,8 +602,10 @@ struct LabHistoryChartCard: View {
         let labAtDate = lab.filter { $0.date == date }
         let gmiAtDate = gmi.filter { $0.date == date }
         let named = !gmiAtDate.isEmpty
+        let hint = detail.target?.isHint == true
         for point in labAtDate {
-            lines.append((named ? "Labor " : "") + valueText(point) + LabChartText.statusSuffix(point.status))
+            lines.append((named ? "Labor " : "") + valueText(point) + LabChartText.statusSuffix(point.status)
+                         + LabChartText.targetSuffix(point.inTarget, hint: hint))
         }
         for point in gmiAtDate {
             lines.append("GMI \(LabFormat.value(point.value, decimals: detail.marker.decimals)) \(gmiUnit)")
@@ -564,6 +616,9 @@ struct LabHistoryChartCard: View {
     private func spokenValue(_ point: ChartPoint) -> String {
         var text = valueText(point)
         if !point.status.spoken.isEmpty { text += ", " + point.status.spoken }
+        if let judgement = detail.target?.judgement(inTarget: point.inTarget, value: point.value) {
+            text += ", " + judgement
+        }
         return text
     }
 }

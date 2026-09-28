@@ -31,14 +31,19 @@ struct LabCombinedMarkerRow: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 6)
-                HStack(alignment: .firstTextBaseline, spacing: 3) {
-                    Text(valueText(marker.latest))
-                        .font(.title3.weight(.semibold))
-                        .monospacedDigit()
-                        .foregroundStyle(BIOSTheme.text1)
-                    Text(marker.latest?.unit ?? marker.unit ?? "mg/dL")
-                        .font(.caption)
-                        .foregroundStyle(BIOSTheme.text2)
+                VStack(alignment: .trailing, spacing: 3) {
+                    HStack(alignment: .firstTextBaseline, spacing: 3) {
+                        Text(valueText(marker.latest))
+                            .font(.title3.weight(.semibold))
+                            .monospacedDigit()
+                            .foregroundStyle(BIOSTheme.text1)
+                        Text(marker.latest?.unit ?? marker.unit ?? "mg/dL")
+                            .font(.caption)
+                            .foregroundStyle(BIOSTheme.text2)
+                    }
+                    if marker.target != nil, marker.latest?.inTarget == false {
+                        LabTag(text: "außerhalb Ziel", style: .context)
+                    }
                 }
             }
             HStack(spacing: 10) {
@@ -106,6 +111,10 @@ struct LabCombinedMarkerRow: View {
         var text = "\(marker.name): \(valueText(marker.latest)) \(unit), \(meta). \(labLine)"
         if let status = marker.latestLab?.status, !status.spoken.isEmpty {
             text += ", \(status.spoken)"
+        }
+        if let target = marker.target, let point = marker.latest {
+            text += ". " + target.spokenLine(decimals: marker.decimals, value: point.value,
+                                             valueText: valueText(point), inTarget: point.inTarget)
         }
         return text
     }
@@ -311,7 +320,7 @@ struct LabCombinedDetailContent: View {
         if let lab = detail.labHistory.last {
             VStack(alignment: .leading, spacing: 6) {
                 LabSectionLabel(title: "Letzter Laborwert")
-                LabValueCard(marker: detail.marker, point: lab, target: nil)
+                LabValueCard(marker: detail.marker, point: lab, target: detail.target)
             }
         }
 

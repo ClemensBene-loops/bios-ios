@@ -147,18 +147,24 @@ struct LabDeviceChartCard: View {
         let timed: Bool
         let comparator: String?
         let status: LabValueStatus
+        let inTarget: Bool?
     }
 
     var body: some View {
         let readings = makeReadings()
         let focusID = selected == nil ? readings.last?.id : nil
-        let yRange = yScale(readings)
+        let target = chartTarget
+        let yRange = yScale(readings, target: target)
         let xRange = xScale(readings)
+        let targetBand = target.flatMap { $0.drawsBand ? $0.band(in: yRange) : nil }
         VStack(alignment: .leading, spacing: 10) {
             Text(readings.count > 1 ? "Verlauf" : "Bisher ein Wert")
                 .font(.headline)
                 .accessibilityAddTraits(.isHeader)
             Chart {
+                LabTargetBandMarks(xStart: xRange.lowerBound, xEnd: xRange.upperBound,
+                                   bandLow: targetBand?.low, bandHigh: targetBand?.high,
+                                   hint: target?.isHint == true, opacity: 0.34)
                 ForEach(readings) { reading in
                     LineMark(
                         x: .value("Zeit", reading.date),
@@ -213,6 +219,12 @@ struct LabDeviceChartCard: View {
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Verlauf \(detail.marker.name)")
 
+            if let target, targetBand != nil {
+                LegendView(items: [LegendItem(color: LabTargetStyle.band,
+                                              text: "dunkel: " + target.displayLabel(decimals: detail.marker.decimals),
+                                              mark: .box, opacity: target.isHint ? 0.45 : 0.8)])
+            }
+
             Text(note)
                 .font(.caption)
                 .foregroundStyle(BIOSTheme.text3)
@@ -225,11 +237,18 @@ struct LabDeviceChartCard: View {
         detail.latest?.unit ?? detail.marker.unit ?? "mg/dL"
     }
 
+    /// The target band of the merged "Blutzucker" (the fingerstick marker has none).
+    private var chartTarget: LabTarget? {
+        guard let target = detail.target, target.matches(unit: unit) else { return nil }
+        return target
+    }
+
     private func makeReadings() -> [Reading] {
         detail.history.compactMap { point in
             guard let date = point.when, let value = point.value else { return nil }
             return Reading(id: point.id, date: date, value: value, origin: point.originText, lab: point.isLabOrigin,
-                           timed: point.measuredAt != nil, comparator: point.comparator, status: point.status)
+                           timed: point.measuredAt != nil, comparator: point.comparator, status: point.status,
+                           inTarget: point.inTarget)
         }
     }
 
@@ -259,6 +278,7 @@ struct LabDeviceChartCard: View {
 
     private func valueLine(_ reading: Reading) -> String {
         valueText(reading) + (reading.lab ? LabChartText.statusSuffix(reading.status) : "")
+            + (detail.target == nil ? "" : LabChartText.targetSuffix(reading.inTarget, hint: detail.target?.isHint == true))
     }
 
     private func spokenWhen(_ reading: Reading) -> String {
@@ -271,11 +291,14 @@ struct LabDeviceChartCard: View {
         var parts = [valueText(reading)]
         if let origin = reading.origin { parts.append(origin) }
         if reading.lab, !reading.status.spoken.isEmpty { parts.append(reading.status.spoken) }
+        if let judgement = detail.target?.judgement(inTarget: reading.inTarget, value: reading.value) {
+            parts.append(judgement)
+        }
         return parts.joined(separator: ", ")
     }
 
-    private func yScale(_ readings: [Reading]) -> ClosedRange<Double> {
-        let values = readings.map(\.value)
+    private func yScale(_ readings: [Reading], target: LabTarget?) -> ClosedRange<Double> {
+        let values = readings.map(\.value) + (target?.scaleBounds ?? [])
         guard let low = values.min(), let high = values.max() else { return 0...200 }
         let span = max(high - low, 20)
         return max(0, low - span * 0.2)...(high + span * 0.2)

@@ -76,37 +76,76 @@ struct LabTag: View {
     }
 }
 
-/// Scale for the reference bar: domain, reference band, value, goal tick.
+/// Colors of the target band ("Zielbereich"): a darker, more saturated green than
+/// the light band of the lab's range; the HbA1c best range is darker still. Outside
+/// the target but inside the lab range is a calm lavender ring, never red.
+enum LabTargetStyle {
+    static let band = Color(hex: 0x178A3E)
+    static let best = Color(hex: 0x0A5A25)
+    static let outside = BIOSTheme.context
+    static let reference = BIOSTheme.good.opacity(0.30)
+}
+
+/// One band on the bar; a nil side runs to the bar's edge.
+struct LabBarBand: Equatable {
+    let low: Double?
+    let high: Double?
+    /// Evidence "hinweis": hatched and lighter.
+    var hint = false
+}
+
+/// Scale for the reference bar: domain (covers the lab's range, the target band and
+/// the value), reference band, target band, best band, value, goal tick.
 struct LabBarScale: Equatable {
     let lower: Double
     let upper: Double
     let bandLow: Double?
     let bandHigh: Double?
+    /// The lab printed a range (else no light band).
+    let hasReference: Bool
     let value: Double?
+    /// Goal tick, only when no target band is drawn (`adds_over_reference` false).
     let tick: Double?
+    /// Target band (darker green).
+    let target: LabBarBand?
+    /// HbA1c: best possible range inside the target (darkest).
+    let best: LabBarBand?
 
-    /// From a point (z-score scale for spirometry) and an optional goal.
+    /// From a point (z-score scale for spirometry) and an optional target.
     init?(point: LabPoint?, target: LabTarget?) {
         guard let point else { return nil }
         if point.usesZScore, let z = point.zScore {
             self.init(value: z, refLow: -1.645, refHigh: nil, tick: nil, zScale: true)
         } else {
-            self.init(value: point.value, refLow: point.refLow, refHigh: point.refHigh, tick: target?.tick, zScale: false)
+            let usable = target.flatMap { $0.matches(unit: point.unit) ? $0 : nil }
+            let band = usable.flatMap { $0.drawsBand ? LabBarBand(low: $0.low, high: $0.high, hint: $0.isHint) : nil }
+            var best: LabBarBand?
+            if band != nil, let raw = usable?.best, raw.low != nil || raw.high != nil {
+                best = LabBarBand(low: raw.low, high: raw.high)
+            }
+            self.init(value: point.value, refLow: point.refLow, refHigh: point.refHigh,
+                      tick: band == nil ? usable?.tick : nil, target: band, best: best, zScale: false)
         }
     }
 
-    init?(value: Double?, refLow: Double?, refHigh: Double?, tick: Double?, zScale: Bool = false) {
+    init?(value: Double?, refLow: Double?, refHigh: Double?, tick: Double?, target: LabBarBand? = nil,
+          best: LabBarBand? = nil, zScale: Bool = false) {
         if zScale {
             lower = -4
             upper = 3
             bandLow = refLow ?? -1.645
             bandHigh = nil
+            hasReference = true
             self.value = value.map { min(3, max(-4, $0)) }
             self.tick = nil
+            self.target = nil
+            self.best = nil
             return
         }
-        let numbers = [value, refLow, refHigh, tick].compactMap { $0 }.filter { $0.isFinite }
-        guard let minimum = numbers.min(), let maximum = numbers.max(), refLow != nil || refHigh != nil else {
+        let bounds = [value, refLow, refHigh, tick, target?.low, target?.high, best?.low, best?.high]
+        let numbers = bounds.compactMap { $0 }.filter { $0.isFinite }
+        guard let minimum = numbers.min(), let maximum = numbers.max(),
+              refLow != nil || refHigh != nil || target != nil else {
             return nil
         }
         var span = maximum - minimum
@@ -123,8 +162,11 @@ struct LabBarScale: Equatable {
         upper = high
         bandLow = refLow
         bandHigh = refHigh
+        hasReference = refLow != nil || refHigh != nil
         self.value = value
         self.tick = tick
+        self.target = target
+        self.best = best
     }
 
     func fraction(_ x: Double) -> CGFloat {
@@ -133,13 +175,17 @@ struct LabBarScale: Equatable {
     }
 }
 
-/// Reference bar: light band = the lab's range, dot = the value (status color),
-/// optional white tick = therapy goal. No band at all = "ohne Referenz" (dashed).
+/// Reference bar: light band = the lab's range, darker band = the target band
+/// (hatched for a hint), darkest inner band = HbA1c best range, dot = the value
+/// (status color, lavender ring when outside the target but not flagged), white tick
+/// = goal without a band. No band at all = "ohne Referenz" (dashed).
 struct LabRangeBar: View {
     let scale: LabBarScale?
     let status: LabValueStatus
     var height: CGFloat = 6
     var dotSize: CGFloat = 10
+    /// Inside the lab's range but outside the target: calm ring, never red.
+    var outsideTarget = false
 
     var body: some View {
         GeometryReader { proxy in
@@ -151,12 +197,26 @@ struct LabRangeBar: View {
                         .fill(Color.white.opacity(0.08))
                         .frame(width: width, height: height)
                         .position(x: width / 2, y: midY)
-                    let start = scale.fraction(scale.bandLow ?? scale.lower) * width
-                    let end = scale.fraction(scale.bandHigh ?? scale.upper) * width
-                    Capsule()
-                        .fill(BIOSTheme.good.opacity(0.30))
-                        .frame(width: max(2, end - start), height: height)
-                        .position(x: start + max(2, end - start) / 2, y: midY)
+                    if scale.hasReference {
+                        segment(scale, low: scale.bandLow, high: scale.bandHigh, width: width, midY: midY,
+                                thickness: height) {
+                            Capsule().fill(LabTargetStyle.reference)
+                        }
+                    }
+                    // Inset inside the light band, so both stay visible where they overlap
+                    // (HbA1c: the target reaches beyond the lab's range).
+                    if let band = scale.target {
+                        segment(scale, low: band.low, high: band.high, width: width, midY: midY,
+                                thickness: scale.hasReference ? max(3, height - 2) : height) {
+                            LabTargetBandFill(hint: band.hint)
+                        }
+                    }
+                    if let best = scale.best {
+                        segment(scale, low: best.low, high: best.high, width: width, midY: midY,
+                                thickness: max(2, height - 4)) {
+                            LabTargetBandFill(best: true)
+                        }
+                    }
                     if let tick = scale.tick {
                         Rectangle()
                             .fill(BIOSTheme.text1)
@@ -167,6 +227,13 @@ struct LabRangeBar: View {
                         Circle()
                             .fill(status.tint)
                             .overlay(Circle().stroke(BIOSTheme.card, lineWidth: 2))
+                            .overlay {
+                                if outsideTarget {
+                                    Circle()
+                                        .stroke(LabTargetStyle.outside, lineWidth: 1.5)
+                                        .padding(-2.5)
+                                }
+                            }
                             .frame(width: dotSize, height: dotSize)
                             .position(x: min(width - dotSize / 2, max(dotSize / 2, scale.fraction(value) * width)), y: midY)
                     }
@@ -178,8 +245,170 @@ struct LabRangeBar: View {
                 }
             }
         }
-        .frame(height: max(height + 8, dotSize))
+        .frame(height: max(height + 8, dotSize + 5))
         .accessibilityHidden(true)
+    }
+
+    /// One band between `low` and `high` (nil = edge of the bar).
+    private func segment<Fill: View>(_ scale: LabBarScale, low: Double?, high: Double?, width: CGFloat, midY: CGFloat,
+                                     thickness: CGFloat, @ViewBuilder fill: () -> Fill) -> some View {
+        let start = scale.fraction(low ?? scale.lower) * width
+        let end = scale.fraction(high ?? scale.upper) * width
+        let length = max(2, end - start)
+        return fill()
+            .frame(width: length, height: thickness)
+            .position(x: start + length / 2, y: midY)
+    }
+}
+
+/// Fill of a target band: solid darker green, darkest for the HbA1c best range,
+/// hatched and lighter for a hint (evidence "hinweis").
+struct LabTargetBandFill: View {
+    var hint = false
+    var best = false
+
+    var body: some View {
+        if hint {
+            Capsule()
+                .fill(LabTargetStyle.band.opacity(0.25))
+                .overlay(LabHatch().stroke(LabTargetStyle.band, lineWidth: 1).clipShape(Capsule()))
+        } else {
+            Capsule()
+                .fill(best ? LabTargetStyle.best : LabTargetStyle.band)
+        }
+    }
+}
+
+/// Diagonal hatching for hint bands.
+struct LabHatch: Shape {
+    var spacing: CGFloat = 4
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        var x = rect.minX - rect.height
+        while x < rect.maxX {
+            path.move(to: CGPoint(x: x, y: rect.maxY))
+            path.addLine(to: CGPoint(x: x + rect.height, y: rect.minY))
+            x += spacing
+        }
+        return path
+    }
+}
+
+/// Legend line "hell: Laborbereich, dunkel: Zielbereich (Leitlinie)".
+struct LabBandLegend: View {
+    var body: some View {
+        HStack(spacing: 6) {
+            Capsule()
+                .fill(LabTargetStyle.reference)
+                .frame(width: 14, height: 7)
+            Capsule()
+                .fill(LabTargetStyle.band)
+                .frame(width: 14, height: 7)
+            Text("hell: Laborbereich, dunkel: Zielbereich (Leitlinie)")
+                .font(.caption)
+                .foregroundStyle(BIOSTheme.text2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Legende: helles Band Laborbereich, dunkles Band Zielbereich nach Leitlinie")
+    }
+}
+
+/// Target block of the marker detail: label with the judgement of the value, HbA1c
+/// best range, why, risk tier and note (LDL, non-HDL, ApoB), evidence and source link.
+struct LabTargetInfo: View {
+    let target: LabTarget
+    let decimals: Int
+    /// `in_target` of the shown point.
+    let inTarget: Bool?
+    let value: Double?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .center, spacing: 8) {
+                LabTargetBandFill(hint: target.isHint)
+                    .frame(width: 16, height: 8)
+                    .accessibilityHidden(true)
+                Text(target.displayLabel(decimals: decimals))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(BIOSTheme.text1)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 6)
+                if let judgement = target.judgement(inTarget: inTarget, value: value) {
+                    LabTag(text: judgement, style: inTarget == true ? .good : .context)
+                }
+            }
+            .accessibilityElement(children: .combine)
+            if let label = target.best?.label {
+                HStack(spacing: 8) {
+                    LabTargetBandFill(best: true)
+                        .frame(width: 16, height: 8)
+                        .accessibilityHidden(true)
+                    Text(label.prefix(1).uppercased() + String(label.dropFirst()))
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(BIOSTheme.text1)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .accessibilityElement(children: .combine)
+            }
+            if let why = target.why {
+                Text(why)
+                    .font(.footnote)
+                    .foregroundStyle(BIOSTheme.text2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let tier = target.tierLabel {
+                Text("Risikostufe: \(tier)")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(BIOSTheme.text1)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let note = target.note {
+                Text(note)
+                    .font(.footnote)
+                    .foregroundStyle(BIOSTheme.text2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if target.evidenceText != nil || target.source != nil {
+                HStack(alignment: .center, spacing: 8) {
+                    if let evidence = target.evidenceText {
+                        LabTag(text: evidence, style: target.isHint ? .grey : .context)
+                    }
+                    source
+                    Spacer(minLength: 0)
+                }
+            }
+            if target.origin == "profil" {
+                Text("Ziel aus deinem Laborprofil.")
+                    .font(.caption)
+                    .foregroundStyle(BIOSTheme.text3)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var source: some View {
+        if let url = target.url {
+            Link(destination: url) {
+                HStack(spacing: 4) {
+                    Text(target.source ?? "Quelle")
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                    Image(systemName: "arrow.up.right.square")
+                        .font(.caption2.weight(.semibold))
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(BIOSTheme.accent)
+            }
+            .accessibilityLabel("Quelle: \(target.source ?? "Leitlinie")")
+            .accessibilityHint("Öffnet die Quelle im Browser")
+        } else if let name = target.source {
+            Text("Quelle: \(name)")
+                .font(.caption)
+                .foregroundStyle(BIOSTheme.text2)
+                .lineLimit(2)
+        }
     }
 }
 
@@ -260,6 +489,7 @@ struct LabSectionLabel: View {
                 Text(trailing)
                     .font(.caption)
                     .foregroundStyle(BIOSTheme.text3)
+                    .accessibilityLabel(trailing.replacingOccurrences(of: "/", with: " von "))
             }
         }
         .padding(.horizontal, 4)
@@ -334,6 +564,49 @@ struct LabSelectionRule: ChartContent {
     }
 }
 
+/// Target band behind the points of a Labor chart: darker green over the whole
+/// width, the HbA1c best range darker inside, a hint band lighter with dashed edges.
+struct LabTargetBandMarks: ChartContent {
+    let xStart: Date
+    let xEnd: Date
+    let bandLow: Double?
+    let bandHigh: Double?
+    var bestLow: Double? = nil
+    var bestHigh: Double? = nil
+    var hintEdges: [Double] = []
+    var hint = false
+    var opacity = 0.42
+
+    var body: some ChartContent {
+        if let bandLow, let bandHigh {
+            RectangleMark(
+                xStart: .value("Von", xStart),
+                xEnd: .value("Bis", xEnd),
+                yStart: .value("Ziel unten", bandLow),
+                yEnd: .value("Ziel oben", bandHigh)
+            )
+            .foregroundStyle(LabTargetStyle.band.opacity(hint ? 0.16 : opacity))
+            .accessibilityHidden(true)
+        }
+        ForEach(hintEdges, id: \.self) { edge in
+            RuleMark(y: .value("Hinweisgrenze", edge))
+                .foregroundStyle(LabTargetStyle.band)
+                .lineStyle(StrokeStyle(lineWidth: 1, dash: [2, 3]))
+                .accessibilityHidden(true)
+        }
+        if let bestLow, let bestHigh {
+            RectangleMark(
+                xStart: .value("Von", xStart),
+                xEnd: .value("Bis", xEnd),
+                yStart: .value("Bestmöglich unten", bestLow),
+                yEnd: .value("Bestmöglich oben", bestHigh)
+            )
+            .foregroundStyle(LabTargetStyle.best.opacity(0.8))
+            .accessibilityHidden(true)
+        }
+    }
+}
+
 enum LabChartText {
     /// "27.09.2026, 21:36" with a time of day, else "15.09.2026".
     static func when(_ date: Date, timed: Bool) -> String {
@@ -344,5 +617,12 @@ enum LabChartText {
     static func statusSuffix(_ status: LabValueStatus) -> String {
         guard status.isFlagged, let tag = status.tag else { return "" }
         return " · " + tag
+    }
+
+    /// " · im Ziel" / " · außerhalb Ziel" from `in_target`, "" without a decision.
+    static func targetSuffix(_ inTarget: Bool?, hint: Bool = false) -> String {
+        guard let inTarget else { return "" }
+        if hint { return inTarget ? " · im Hinweisbereich" : " · außerhalb Hinweisbereich" }
+        return inTarget ? " · im Ziel" : " · außerhalb Ziel"
     }
 }
