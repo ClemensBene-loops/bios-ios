@@ -127,7 +127,8 @@ points and the `flagged` values (tap opens the marker in the Labor tab). Mehr >
 Formula 4 (28.09.2026 evening, contract section "Formel 4", fixture
 `docs/fixtures/health_v4.json`): when the server sends `health.ring`, the app draws
 exactly these six segments in server order (Schlaf, Erholung, Zucker, Bewegung,
-Therapie, Labor), arc length = `arc` (20/20/25/15/10/10), fill = `fill`, colors
+Routine, Labor; Routine = key `therapie`, relabelled on 29.09.2026, key and series
+`health_therapie` unchanged), arc length = `arc` (20/20/25/15/10/10), fill = `fill`, colors
 from the server. Status styles: `keine_daten` grey dashed, `pause` grey ("Pause
 wegen Infekt"), `nicht_erfasst` grey, `verblasst` (Labor only) paler with
 `stand_label`. Labor is a real segment now. Under the score: `cap.text` when the cap
@@ -582,7 +583,7 @@ score detail (130/10); see "Gesundheits-Score" above.
 | --- | --- | --- |
 | `health_score` | `Int?` | Gesundheits-Score 0 to 100 |
 | `health_level` | `String?` | level word (fallback from the score: 80 / 65 / 50) |
-| `pillars_mini` | `[Double?]?` | six segment fills in ring order (formula 4: Schlaf, Erholung, Zucker, Bewegung, Therapie, Labor), null = no data |
+| `pillars_mini` | `[Double?]?` | six segment fills in ring order (formula 4: Schlaf, Erholung, Zucker, Bewegung, Routine, Labor), null = no data |
 | `mode` | `String` | `normal`, `infection`, `temperature` (unknown = normal) |
 | `infection_score`, `infection_day` | `Int?` | Infekt-Score, day of the episode |
 | `infection_kind` | `String?` | `infekt` or `infekt_frueh` |

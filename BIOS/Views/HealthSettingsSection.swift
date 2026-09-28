@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// Mehr > "Gesundheits-Score": weekly strength goal for the Routine part
-/// Krafttraining (`PATCH /v1/health/settings`, 0 = off). After a successful
-/// change the dashboard reloads, so score and detail show the new goal.
+/// Mehr > "Gesundheits-Score": weekly strength goal for the Bewegung
+/// segment (formula 4; formula 3 servers: Routine part Krafttraining),
+/// `PATCH /v1/health/settings`, 0 = off. After a successful change the dashboard reloads, so score and detail show the new goal.
 struct HealthSettingsSection: View {
     @EnvironmentObject var dashboardStore: DashboardStore
     @ObservedObject private var store = HealthSettingsStore.shared

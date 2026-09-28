@@ -188,7 +188,7 @@ private struct InfoColumn: View {
 
 /// Mini ring: the shared six-arc ring (Shared/HealthRing.swift) with
 /// segment-tinted tracks, the score and the level word in the middle.
-/// Formula 4 order and arcs (Schlaf, Erholung, Zucker, Bewegung, Therapie,
+/// Formula 4 order and arcs (Schlaf, Erholung, Zucker, Bewegung, Routine,
 /// Labor; 20/20/25/15/10/10), colors from HealthPillarPalette.
 /// `diameter` is the center line circle of the stroke.
 struct HealthRingView: View {

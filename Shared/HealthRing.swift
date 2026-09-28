@@ -9,10 +9,13 @@ import SwiftUI
 
 /// Formula 4 (28.09.2026): six ring segments in the server order
 /// (`V4_ORDER` in the BIOS repo, analysis/health_score.py), clockwise from
-/// 12 o'clock: Schlaf, Erholung, Zucker, Bewegung, Therapie, Labor. Arc length
+/// 12 o'clock: Schlaf, Erholung, Zucker, Bewegung, Routine, Labor. Arc length
 /// = nominal weight (20, 20, 25, 15, 10, 10). The server sends order, labels
 /// and colors in `health.ring`; these are the defaults (Live Activity and
 /// widgets get only the six fills in `pillars_mini`).
+///
+/// Segment 5 keeps the key `therapie` (series `health_therapie`) but is labelled
+/// "Routine" since 29.09.2026 (medication + supplement adherence).
 ///
 /// Old servers (formula 1 to 3, no `ring`) keep their layout: six equal arcs
 /// Schlaf, Erholung, Stoffwechsel, Kreislauf, Abwehr, Routine (`legacy`), Labor
@@ -34,7 +37,7 @@ enum HealthPillarPalette {
         Pillar(key: "erholung", label: "Erholung", hex: 0x14B8A6, arc: 20),
         Pillar(key: "zucker", label: "Zucker", hex: 0xF59E0B, arc: 25),
         Pillar(key: "bewegung", label: "Bewegung", hex: 0xF97362, arc: 15),
-        Pillar(key: "therapie", label: "Therapie", hex: 0xA855F7, arc: 10),
+        Pillar(key: "therapie", label: "Routine", hex: 0xA855F7, arc: 10),
         Pillar(key: "labor", label: "Labor", hex: 0xE0457B, arc: 10),
     ]
 

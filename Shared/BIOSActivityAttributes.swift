@@ -99,7 +99,7 @@ struct BIOSActivityState: Codable, Hashable, Sendable {
     var healthLevel: String?
     /// Six segment fills 0...100 in ring order (HealthPillarPalette.order,
     /// formula 4 since 28.09.2026: Schlaf, Erholung, Zucker, Bewegung,
-    /// Therapie, Labor), null = no value (grey dashed slot). Key and length
+    /// Routine, Labor), null = no value (grey dashed slot). Key and length
     /// unchanged since formula 1.
     var pillarsMini: [Double?]?
     var mode: BIOSActivityMode = .normal

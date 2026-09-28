@@ -3,7 +3,7 @@ import SwiftUI
 // View models for the dashboard blocks `health` (Gesundheits-Score) and
 // `vitals` (last temperature / blood pressure entered in the app).
 // Formula 4 servers send `ring` (six segments Schlaf, Erholung, Zucker,
-// Bewegung, Therapie, Labor, `HealthSegment`); old servers only `pillars`
+// Bewegung, Routine (key `therapie`), Labor, `HealthSegment`); old servers only `pillars`
 // (six legacy ring pillars plus Labor in the background, `HealthPillar`).
 // Lenient like the rest: a missing block hides its card.
 

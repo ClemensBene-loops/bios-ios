@@ -467,7 +467,7 @@ final class LiveActivityController: ObservableObject {
             } else {
                 // Old server: legacy pillars mapped onto the new slots
                 // (Stoffwechsel -> Zucker, Kreislauf -> Bewegung, Routine ->
-                // Therapie; Abwehr has no slot), so the palette colors match.
+                // Routine, key `therapie`; Abwehr has no slot), so the palette colors match.
                 for pillar in health.list("pillars") {
                     guard let key = pillar.str("key") ?? pillar.str("id"),
                           let score = pillar.double("score") ?? pillar.double("value") else { continue }
