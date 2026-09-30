@@ -283,8 +283,9 @@ struct BodyMapLayerContent: View {
         }
     }
 
-    /// Neutral link "Laborwerte" in the sheet of a systems region that has
-    /// confirmed lab values (lab values never color the map).
+    /// Link "Laborwerte" in the sheet of a systems region that has confirmed
+    /// lab values. Since server 30.09.2026 the lab/DEXA regions carry those
+    /// values as metrics; the server decides the status (only while fresh).
     private func laborLink(for region: BodyMapRegion) -> (() -> Void)? {
         guard layer.isSystems, store.model?.demo != true,
               LabStore.shared.overview?.hasValues(inRegion: region.id) == true else { return nil }
@@ -659,7 +660,7 @@ struct BodyMapRegionSheet: View {
                         )
                     }
                     .buttonStyle(.plain)
-                    .accessibilityHint("Öffnet den Tab Labor. Laborwerte färben die Körperkarte nicht.")
+                    .accessibilityHint("Öffnet den Tab Labor mit allen Werten dieser Region.")
                 }
 
                 Text(BodyMapStyle.note)

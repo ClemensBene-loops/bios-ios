@@ -47,7 +47,7 @@ enum BodyMapStyle {
     static let unavailableTitle = "Körperkarte noch nicht verfügbar"
     static let unavailableText = "Der Server liefert die Körperkarte noch nicht. Sie erscheint nach dem Server-Update von selbst."
     static let noDataTitle = "Körperkarte: keine Daten"
-    static let neutralText = "Für diese Region gibt es noch keine Messwerte. Sie bleibt neutral, bis Laborwerte oder DEXA vorliegen."
+    static let neutralText = "Für diese Region gibt es noch keine bestätigten Messwerte. Sie bleibt neutral, bis du Laborwerte oder eine DEXA im Tab Labor bestätigst."
     static let noMetricsText = "Für diese Region liegen gerade keine Werte vor."
     static let noReason = "Keine Daten"
     static let allOk = "Alles im Rahmen"

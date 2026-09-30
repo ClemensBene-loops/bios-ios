@@ -665,7 +665,7 @@ struct LabContextCard: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Körperkarte, Region \(regionLabel(region)) öffnen")
-                    .accessibilityHint("Laborwerte färben die Körperkarte nicht")
+                    .accessibilityHint("Zeigt die Region mit ihren bestätigten Werten")
                 }
             }
             .biosCard()
@@ -739,6 +739,7 @@ struct LabContextCard: View {
         case "abwehr": return "Abwehr"
         case "lunge": return "Lunge"
         case "knochen": return "Knochen"
+        case "muskeln": return "Muskeln"
         case "kopf_schlaf": return "Kopf und Schlaf"
         default: return id
         }
