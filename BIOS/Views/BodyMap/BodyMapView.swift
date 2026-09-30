@@ -226,6 +226,7 @@ struct BodyMapLayerContent: View {
     @State private var selected: BodyMapRegion?
     @State private var pendingRoute: DetailRoute?
     @State private var pendingLabor = false
+    @State private var pendingReviewList = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -259,13 +260,17 @@ struct BodyMapLayerContent: View {
             if let route = pendingRoute {
                 pendingRoute = nil
                 router.koerperPath.append(route)
+            } else if pendingReviewList {
+                pendingReviewList = false
+                router.showLabor(.reviewList)
             } else if pendingLabor {
                 pendingLabor = false
                 router.showLabor()
             }
         }) { region in
             BodyMapRegionSheet(region: region, demo: store.model?.demo == true,
-                               onLabor: laborLink(for: region)) { route in
+                               onLabor: laborLink(for: region),
+                               onReview: reviewLink(for: region)) { route in
                 pendingRoute = route
                 selected = nil
             }
@@ -291,6 +296,17 @@ struct BodyMapLayerContent: View {
               LabStore.shared.overview?.hasValues(inRegion: region.id) == true else { return nil }
         return {
             pendingLabor = true
+            selected = nil
+        }
+    }
+
+    /// Button "Im Labor-Tab prüfen" while the server marks the region
+    /// `pending_review` (a lab/DEXA document waits for the confirmation);
+    /// opens the review list of the Labor tab. Both layers, never in the demo.
+    private func reviewLink(for region: BodyMapRegion) -> (() -> Void)? {
+        guard region.pendingReview, store.model?.demo != true else { return nil }
+        return {
+            pendingReviewList = true
             selected = nil
         }
     }
@@ -514,9 +530,19 @@ struct BodyMapRegionRow: View {
             HStack(spacing: 12) {
                 BodyMapStatusBadge(status: region.status)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(region.label)
-                        .font(.body.weight(.medium))
-                        .foregroundStyle(region.neutral ? BIOSTheme.text2 : BIOSTheme.text1)
+                    HStack(spacing: 6) {
+                        Text(region.label)
+                            .font(.body.weight(.medium))
+                            .foregroundStyle(region.neutral ? BIOSTheme.text2 : BIOSTheme.text1)
+                        if region.pendingReview {
+                            Text(BodyMapStyle.pendingTag)
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(BIOSTheme.midText)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(BIOSTheme.mid.opacity(0.18), in: Capsule())
+                        }
+                    }
                     (Text(region.statusLabel).bold().foregroundStyle(region.status.color)
                         + Text(" · " + region.reason).foregroundStyle(BIOSTheme.text2))
                         .font(.footnote)
@@ -550,6 +576,8 @@ struct BodyMapRegionSheet: View {
     var demo = false
     /// Neutral link into the Labor tab (only when the region has lab values).
     var onLabor: (() -> Void)?
+    /// Review list of the Labor tab (only while the region is `pending_review`).
+    var onReview: (() -> Void)?
     let onLink: (DetailRoute) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -580,6 +608,10 @@ struct BodyMapRegionSheet: View {
                 }
 
                 statusBox
+
+                if let onReview {
+                    pendingBox(onReview)
+                }
 
                 if region.metrics.isEmpty {
                     HStack(alignment: .top, spacing: 10) {
@@ -697,6 +729,41 @@ struct BodyMapRegionSheet: View {
                 .strokeBorder(Color.white.opacity(region.status.background == nil ? 0.2 : 0), lineWidth: 1)
         )
         .accessibilityElement(children: .combine)
+    }
+
+    /// Clearly visible while a document of this region waits in the Labor tab.
+    private func pendingBox(_ action: @escaping () -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(BodyMapStyle.pendingTitle, systemImage: "checkmark.seal")
+                .font(.headline)
+                .foregroundStyle(BIOSTheme.midText)
+            Text(BodyMapStyle.pendingText)
+                .font(.subheadline)
+                .foregroundStyle(BIOSTheme.text1)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(action: action) {
+                HStack(spacing: 8) {
+                    Image(systemName: "testtube.2")
+                    Text(BodyMapStyle.pendingButton)
+                    Spacer(minLength: 4)
+                    Image(systemName: "chevron.right")
+                }
+                .font(.body.weight(.semibold))
+                .foregroundStyle(BIOSTheme.midText)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(BIOSTheme.mid.opacity(0.16), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Öffnet die Liste der Befunde, die auf deine Bestätigung warten.")
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(BIOSTheme.mid.opacity(0.5), lineWidth: 1)
+        )
     }
 
     private func sectionLabel(_ text: String) -> some View {

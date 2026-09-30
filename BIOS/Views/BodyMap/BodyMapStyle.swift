@@ -49,6 +49,11 @@ enum BodyMapStyle {
     static let noDataTitle = "Körperkarte: keine Daten"
     static let neutralText = "Für diese Region gibt es noch keine bestätigten Messwerte. Sie bleibt neutral, bis du Laborwerte oder eine DEXA im Tab Labor bestätigst."
     static let noMetricsText = "Für diese Region liegen gerade keine Werte vor."
+    /// Region with `pending_review`: tag in the list, box with a button in the sheet.
+    static let pendingTag = "Zu prüfen"
+    static let pendingTitle = "Wartet auf deine Bestätigung"
+    static let pendingText = "Ein Befund für diese Region liegt im Labor-Tab und zählt erst, wenn du ihn bestätigst."
+    static let pendingButton = "Im Labor-Tab prüfen"
     static let noReason = "Keine Daten"
     static let allOk = "Alles im Rahmen"
     static let partialErrors = "Nicht berechnet"

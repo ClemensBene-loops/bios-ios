@@ -114,6 +114,9 @@ struct BodyMapRegion: Identifiable {
     let statusLabel: String
     let reason: String
     let neutral: Bool
+    /// Server `pending_review` (since 30.09.2026): a lab/DEXA document of this
+    /// region waits for the confirmation in the Labor tab.
+    let pendingReview: Bool
     /// Badge position (normalized), nil = no badge.
     let badge: CGPoint?
     let shapes: [BodyMapEllipse]
@@ -135,6 +138,7 @@ struct BodyMapRegion: Identifiable {
             ? (json.str("status_label") ?? status.label) : status.label
         reason = json.str("reason") ?? BodyMapStyle.noReason
         neutral = json.flag("neutral")
+        pendingReview = json.flag("pending_review")
         let serverShapes = json.list("shapes").compactMap(Self.ellipse)
         shapes = serverShapes.isEmpty ? (layout?.shapes ?? []) : serverShapes
         badge = json.obj("anchor").flatMap(Self.point) ?? layout?.badge
@@ -151,6 +155,7 @@ struct BodyMapRegion: Identifiable {
         statusLabel = status.label
         self.reason = reason ?? BodyMapStyle.noReason
         neutral = false
+        pendingReview = false
         badge = layout.badge
         shapes = layout.shapes
         metrics = []
