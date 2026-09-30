@@ -515,11 +515,15 @@ struct LabMarkerEntry: Identifiable, Equatable {
     let latestLab: LabPoint?
     /// Merged "Blutzucker": values per origin.
     let parts: [LabMergedPart]
+    /// Further names for the search (`aliases`, `short_name`, `abbr`; all optional,
+    /// today the app adds its own list in `LabMarkerSearch`).
+    let aliases: [String]
 
     init?(json: JSONValue) {
         guard let id = json.str("id") else { return nil }
         self.id = id
         name = json.str("name") ?? id
+        aliases = json.strings("aliases") + [json.str("short_name"), json.str("abbr")].compactMap { $0 }
         unit = json.str("unit")
         decimals = max(0, min(4, json.int("decimals") ?? 1))
         custom = json.flag("custom")

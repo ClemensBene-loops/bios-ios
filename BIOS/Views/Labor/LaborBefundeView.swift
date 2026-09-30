@@ -135,27 +135,7 @@ struct LaborBefundeSection: View {
                 options.append(LabFilterOption(id: id, label: document.kind == nil ? "Neu" : (document.kindLabel ?? id)))
             }
         }
-        return ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 7) {
-                ForEach(options) { option in
-                    let selected = option.id == filter
-                    Button {
-                        filter = option.id
-                    } label: {
-                        Text(option.label)
-                            .font(.footnote.weight(.semibold))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .foregroundStyle(selected ? Color.black : BIOSTheme.text2)
-                            .background(Capsule().fill(selected ? BIOSTheme.text1 : BIOSTheme.card2))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityAddTraits(selected ? .isSelected : [])
-                    .accessibilityLabel("Filter \(option.label)")
-                }
-            }
-            .padding(.horizontal, 2)
-        }
+        return LabFilterChipBar(options: options, selection: filter) { filter = $0 }
     }
 
     /// Documents grouped by month (server order: newest first).
@@ -189,6 +169,13 @@ struct LaborBefundeSection: View {
 struct LabFilterOption: Identifiable {
     let id: String
     let label: String
+    /// Entries behind the chip, spoken only ("Filter Blutfette, 6 Werte").
+    var count: Int?
+
+    var spoken: String {
+        guard let count else { return "Filter \(label)" }
+        return "Filter \(label), " + (count == 1 ? "1 Wert" : "\(count) Werte")
+    }
 }
 
 struct LabMonthSection: Identifiable {

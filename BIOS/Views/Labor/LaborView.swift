@@ -71,6 +71,7 @@ struct LaborView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 24)
         }
+        .scrollDismissesKeyboard(.immediately)
         .biosPageBackground()
         .navigationTitle("Labor")
         .navigationDestination(for: LabRoute.self) { route in
@@ -218,35 +219,72 @@ struct LabStandLine: View {
 
 // MARK: - Werte
 
-/// Segment "Werte": due card, summary chips, groups with marker rows, empty state.
+/// Segment "Werte": summary chips (targets), a compact due card (2 items), search
+/// field and group chips, then the groups with marker rows; "Eigene Messungen" as a
+/// collapsed row below. So the values are what the tab shows first.
 struct LaborWerteSection: View {
     @ObservedObject private var store = LabStore.shared
+    @ObservedObject private var state = LabWerteViewState.shared
+    @State private var query = ""
 
     var body: some View {
         let overview = store.overview
+        let searching = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         VStack(alignment: .leading, spacing: 12) {
             if store.review.documents > 0 {
                 LabReviewBanner(review: store.review, documents: store.reviewDocuments)
             }
-            if let due = overview?.due, !due.isEmpty {
-                LabDueCard(items: due)
-            }
-            if let own = overview?.own, !own.isEmpty {
-                LabOwnMeasurementsCard(own: own)
-            }
             if let overview, overview.hasValues {
                 LabSummaryChips(overview: overview, review: store.review)
-                if overview.labMarkers.contains(where: { $0.target?.drawsBand == true }) {
-                    LabBandLegend()
-                        .padding(.horizontal, 4)
-                }
-                ForEach(overview.groups) { group in
-                    LabGroupSection(group: group)
-                }
+            }
+            if !searching, let due = overview?.due, !due.isEmpty {
+                LabDueCard(items: due)
+            }
+            if let overview, overview.hasValues {
+                values(overview)
             } else if overview != nil || store.lastError == nil {
                 LabEmptyState()
             }
+            if !searching, let own = overview?.own, !own.isEmpty {
+                LabOwnMeasurementsCard(own: own)
+            }
         }
+    }
+
+    @ViewBuilder
+    private func values(_ overview: LabOverview) -> some View {
+        let groupID = activeGroup(overview)
+        let filter = LabWerteFilter(groups: overview.groups, groupID: groupID, query: query)
+        LabMarkerSearchField(text: $query)
+        LabFilterChipBar(options: chipOptions(overview), selection: groupID) { id in
+            withAnimation(.easeInOut(duration: 0.2)) { state.group = id }
+        }
+        if filter.isEmpty {
+            LabNoMatchView(query: query,
+                           groupLabel: overview.groups.first { $0.id == groupID }?.label,
+                           hitsElsewhere: filter.hitsInAllGroups,
+                           showAllGroups: { withAnimation { state.group = LabWerteViewState.all } },
+                           clearSearch: { query = "" })
+        } else {
+            if filter.sections.contains(where: { $0.markers.contains { $0.target?.drawsBand == true && !$0.isDevice } }) {
+                LabBandLegend()
+                    .padding(.horizontal, 4)
+            }
+            ForEach(filter.sections) { section in
+                LabGroupSection(group: section.group, markers: section.markers)
+            }
+        }
+    }
+
+    /// The remembered chip, or "Alle" when that group has no values (any more).
+    private func activeGroup(_ overview: LabOverview) -> String {
+        overview.groups.contains { $0.id == state.group } ? state.group : LabWerteViewState.all
+    }
+
+    /// "Alle" plus the groups that have values, in server order with server labels.
+    private func chipOptions(_ overview: LabOverview) -> [LabFilterOption] {
+        [LabFilterOption(id: LabWerteViewState.all, label: "Alle", count: overview.allMarkers.count)]
+            + overview.groups.map { LabFilterOption(id: $0.id, label: $0.label, count: $0.markers.count) }
     }
 }
 
@@ -255,8 +293,11 @@ struct LabDueCard: View {
     let items: [LabDue]
     @State private var showAll = false
 
+    /// Items shown before "Alle anzeigen", so the values stay near the top.
+    static let collapsedCount = 2
+
     var body: some View {
-        let shown = showAll ? items : Array(items.prefix(4))
+        let shown = showAll ? items : Array(items.prefix(Self.collapsedCount))
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Fällig")
@@ -285,11 +326,18 @@ struct LabDueCard: View {
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("\(item.label), \(item.subline), \(spoken(item))")
             }
-            if items.count > 4 {
-                Button(showAll ? "Weniger zeigen" : "Alle \(items.count) zeigen") {
-                    withAnimation { showAll.toggle() }
+            if items.count > Self.collapsedCount {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) { showAll.toggle() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(showAll ? "Weniger anzeigen" : "Alle anzeigen (\(items.count))")
+                        Image(systemName: showAll ? "chevron.up" : "chevron.down")
+                            .font(.caption2.weight(.semibold))
+                    }
                 }
                 .font(.footnote.weight(.semibold))
+                .accessibilityLabel(showAll ? "Weniger anzeigen" : "Alle \(items.count) fälligen Einträge anzeigen")
             }
         }
         .biosCard()
@@ -344,15 +392,18 @@ struct LabSummaryChips: View {
     }
 }
 
-/// One group: label with count, card with marker rows.
+/// One group: label with count, card with marker rows. `markers` narrows the rows
+/// (search); nil shows all of the group.
 struct LabGroupSection: View {
     let group: LabGroup
+    var markers: [LabMarkerEntry]?
 
     var body: some View {
+        let rows = markers ?? group.markers
         VStack(alignment: .leading, spacing: 6) {
             LabSectionLabel(title: group.label, trailing: trailing)
             VStack(spacing: 0) {
-                ForEach(Array(group.markers.enumerated()), id: \.element.id) { index, marker in
+                ForEach(Array(rows.enumerated()), id: \.element.id) { index, marker in
                     if index > 0 {
                         Rectangle()
                             .fill(BIOSTheme.separator)
@@ -370,6 +421,9 @@ struct LabGroupSection: View {
     }
 
     private var trailing: String {
+        if let markers, markers.count < group.markers.count {
+            return "\(markers.count) von \(group.markers.count) Markern"
+        }
         let labCount = group.markers.filter { !$0.isDevice }.count
         let deviceCount = group.markers.count - labCount
         var count = labCount == 1 ? "1 Marker" : "\(labCount) Marker"

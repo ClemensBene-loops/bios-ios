@@ -343,6 +343,14 @@ Labor" link in its sheet.
   range, dot = value, white tick = therapy goal from `target`), mini sparkline.
   Markers never measured are simply absent. Without values: empty state with an
   explanation and the import button. Out of range is calm yellow, never red.
+  Order since 2026-09-30 (values first): summary chips with the targets chip, "Fällig"
+  with the first 2 items and "Alle anzeigen (n)", an inline search field (name, short
+  name like LDL, HbA1c, GPT, Vit D, marker id and group; umlaut/hyphen tolerant; app-side
+  abbreviation list in `LabWerteFilter.swift`, optional server `aliases` decoded),
+  horizontally scrolling group chips "Alle" + each group with values (server labels,
+  selection kept for the app session), chips AND search combined, "Kein Wert gefunden"
+  with "n Treffer in allen Gruppen" / "Suche löschen"; "Eigene Messungen" is a
+  collapsed row below the groups (values in short, tap expands).
 - **Zielbereich** (since 2026-09-28, `target` per marker, `Point.in_target`, overview
   `targets`, group `n_target`/`n_in_target`): the lab range is a subtle low-opacity
   green band with a faint outline, the evidence-based target a vivid green capsule drawn
@@ -390,7 +398,7 @@ Labor" link in its sheet.
   chart (squares = lab, circles = capillary), the CGM comparison of the fingersticks,
   list of all values with origin (lab values with range and tag, document values open
   the document).
-- **Eigene Messungen** (`own` of `GET /v1/labs`): card above the groups with height
+- **Eigene Messungen** (`own` of `GET /v1/labs`): collapsed row below the groups with height
   and weight (tap opens the body editor), BMI, home blood pressure (7-day mean of the
   home series, last reading, tag im Ziel/über Ziel/erhöht), last temperature and the
   newest blood glucose (opens the merged marker). Height, weight, BMI and blood

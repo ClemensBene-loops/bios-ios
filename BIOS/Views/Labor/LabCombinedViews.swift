@@ -122,50 +122,102 @@ struct LabCombinedMarkerRow: View {
 
 // MARK: - Eigene Messungen
 
-/// Card "Eigene Messungen" on top of "Werte": Clemens' own values instead of the visit
-/// vitals printed in letters (those stay inside their document).
+/// Card "Eigene Messungen" below the groups of "Werte": Clemens' own values instead of
+/// the visit vitals printed in letters (those stay inside their document). Collapsed by
+/// default to one row with the values in short; the state lasts for the app session.
 struct LabOwnMeasurementsCard: View {
     let own: LabOwnMeasurements
+    @ObservedObject private var state = LabWerteViewState.shared
 
     var body: some View {
+        let expanded = state.ownExpanded
         VStack(alignment: .leading, spacing: 10) {
-            Text(own.label)
-                .font(.headline)
-                .accessibilityAddTraits(.isHeader)
-            NavigationLink {
-                BodyProfileView()
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { state.ownExpanded.toggle() }
             } label: {
-                row(symbol: "figure.stand", title: "Größe und Gewicht", value: bodyValue, detail: bodyDetail,
-                    chevron: true)
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(own.label)
+                            .font(.headline)
+                            .foregroundStyle(BIOSTheme.text1)
+                        if !expanded, let summary = collapsedSummary {
+                            Text(summary)
+                                .font(.caption)
+                                .foregroundStyle(BIOSTheme.text2)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.85)
+                        }
+                    }
+                    Spacer(minLength: 6)
+                    Image(systemName: "chevron.down")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(BIOSTheme.text3)
+                        .rotationEffect(.degrees(expanded ? 180 : 0))
+                        .accessibilityHidden(true)
+                }
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityHint("Öffnet Größe und Gewicht zum Ändern")
-            if let bp = own.bloodPressure {
-                row(symbol: "heart", title: "Blutdruck (zu Hause)", value: bpValue(bp), detail: bpDetail(bp),
-                    tag: bpTag(bp))
-            }
-            if let temperature = own.temperature {
-                row(symbol: "thermometer.medium", title: "Temperatur",
-                    value: "\(BIOSFormat.number(temperature.value, digits: 1)) °C",
-                    detail: temperatureDetail(temperature))
-            }
-            if let glucose = own.glucose {
-                NavigationLink(value: LabRoute.marker(glucose.markerID)) {
-                    row(symbol: "drop", title: "Blutzucker",
-                        value: "\(LabFormat.value(glucose.value, decimals: 0)) \(glucose.unit)",
-                        detail: glucoseDetail(glucose), chevron: true)
-                }
-                .buttonStyle(.plain)
-                .accessibilityHint("Öffnet den Verlauf aller Blutzuckerwerte")
-            }
-            if let note = own.note {
-                Text(note)
-                    .font(.caption)
-                    .foregroundStyle(BIOSTheme.text3)
-                    .fixedSize(horizontal: false, vertical: true)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(own.label)
+            .accessibilityValue(expanded ? "aufgeklappt" : ("zugeklappt" + (collapsedSummary.map { ", " + $0 } ?? "")))
+            .accessibilityHint(expanded ? "Klappt die eigenen Messungen zu" : "Zeigt Größe, Gewicht, Blutdruck, Temperatur und Blutzucker")
+            .accessibilityAddTraits([.isButton, .isHeader])
+            if expanded {
+                rows
             }
         }
         .biosCard()
+    }
+
+    /// "184 cm · 88,0 kg · Ø 128/82 · 36,6 °C" for the collapsed row.
+    private var collapsedSummary: String? {
+        var parts: [String] = []
+        if own.body != nil, bodyValue != "eintragen" { parts.append(bodyValue) }
+        if let bp = own.bloodPressure { parts.append(bpValue(bp)) }
+        if let temperature = own.temperature {
+            parts.append("\(BIOSFormat.number(temperature.value, digits: 1)) °C")
+        }
+        if let glucose = own.glucose {
+            parts.append("BZ \(LabFormat.value(glucose.value, decimals: 0))")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    @ViewBuilder
+    private var rows: some View {
+        NavigationLink {
+            BodyProfileView()
+        } label: {
+            row(symbol: "figure.stand", title: "Größe und Gewicht", value: bodyValue, detail: bodyDetail,
+                chevron: true)
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Öffnet Größe und Gewicht zum Ändern")
+        if let bp = own.bloodPressure {
+            row(symbol: "heart", title: "Blutdruck (zu Hause)", value: bpValue(bp), detail: bpDetail(bp),
+                tag: bpTag(bp))
+        }
+        if let temperature = own.temperature {
+            row(symbol: "thermometer.medium", title: "Temperatur",
+                value: "\(BIOSFormat.number(temperature.value, digits: 1)) °C",
+                detail: temperatureDetail(temperature))
+        }
+        if let glucose = own.glucose {
+            NavigationLink(value: LabRoute.marker(glucose.markerID)) {
+                row(symbol: "drop", title: "Blutzucker",
+                    value: "\(LabFormat.value(glucose.value, decimals: 0)) \(glucose.unit)",
+                    detail: glucoseDetail(glucose), chevron: true)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Öffnet den Verlauf aller Blutzuckerwerte")
+        }
+        if let note = own.note {
+            Text(note)
+                .font(.caption)
+                .foregroundStyle(BIOSTheme.text3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private func row(symbol: String, title: String, value: String, detail: String?, tag: (String, LabTag.Style)? = nil,
