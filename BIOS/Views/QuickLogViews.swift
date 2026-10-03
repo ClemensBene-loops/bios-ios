@@ -238,42 +238,9 @@ struct SupplementTodayView: View {
                         .foregroundStyle(BIOSTheme.text2)
                 }
                 ForEach(items) { item in
-                    let taken = store.isTaken(item, on: day)
-                    Button {
-                        Task { @MainActor in
-                            let outcome = await store.setTaken(item, on: day, taken: !taken)
-                            message = SupplementTodayView.message(outcome, done: !taken)
-                        }
-                    } label: {
-                        HStack(alignment: .top, spacing: 12) {
-                            Image(systemName: taken ? "checkmark.circle.fill" : "circle")
-                                .font(.title3)
-                                .foregroundStyle(taken ? BIOSTheme.good : BIOSTheme.text3)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(item.name)
-                                    .font(.body.weight(.semibold))
-                                let detail = [item.brand, item.doseText.isEmpty ? nil : item.doseText]
-                                    .compactMap { $0 }
-                                    .joined(separator: " · ")
-                                if !detail.isEmpty {
-                                    Text(detail)
-                                        .font(.footnote)
-                                        .foregroundStyle(BIOSTheme.text2)
-                                }
-                                if let note = item.note {
-                                    Text(note)
-                                        .font(.caption)
-                                        .foregroundStyle(BIOSTheme.text3)
-                                }
-                            }
-                            Spacer(minLength: 0)
-                        }
-                        .foregroundStyle(BIOSTheme.text1)
+                    SupplementTickRow(item: item, day: day) { outcome, done in
+                        message = SupplementTodayView.message(outcome, done: done)
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(item.name)
-                    .accessibilityValue(taken ? "genommen" : "nicht genommen")
-                    .accessibilityHint("Doppeltippen zum Umschalten")
                 }
             } header: {
                 Text("Präparate")
@@ -283,7 +250,7 @@ struct SupplementTodayView: View {
                 NavigationLink {
                     SupplementHistoryView()
                 } label: {
-                    Label("Verlauf", systemImage: "calendar")
+                    Label("Verlauf und Nachtragen", systemImage: "calendar")
                 }
                 NavigationLink {
                     SupplementEditView()
@@ -329,6 +296,11 @@ struct SupplementHistoryView: View {
                     StatItem(label: "letzte 30 Tage", value: "\(completeDays(30))", unit: "komplett")
                 }
                 .biosCard()
+                Label("Tag antippen zum Nachtragen (Supplements und Medikamentenplan, bis \(IntakeDayView.maxDaysBack) Tage zurück).",
+                      systemImage: "hand.tap")
+                    .font(.footnote)
+                    .foregroundStyle(BIOSTheme.text2)
+                    .padding(.horizontal, 4)
                 ForEach(AlcoholCalendarView.months(count: 6), id: \.self) { month in
                     IntakeMonthGrid(month: month)
                 }
@@ -391,7 +363,7 @@ struct IntakeMonthGrid: View {
                         let day = EventStore.dayString(date)
                         let complete = store.isComplete(on: day)
                         let partial = !complete && store.hasAnyIntake(on: day)
-                        VStack(spacing: 2) {
+                        let cell = VStack(spacing: 2) {
                             Text("\(Calendar.current.component(.day, from: date))")
                                 .font(.footnote)
                                 .monospacedDigit()
@@ -401,9 +373,21 @@ struct IntakeMonthGrid: View {
                                 .foregroundStyle(complete ? BIOSTheme.good : (partial ? BIOSTheme.mid : BIOSTheme.text3.opacity(0.3)))
                         }
                         .frame(maxWidth: .infinity, minHeight: 36)
+                        .contentShape(Rectangle())
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel("\(Calendar.current.component(.day, from: date)).")
                         .accessibilityValue(complete ? "alle genommen" : (partial ? "teilweise" : "nichts eingetragen"))
+                        if IntakeDayView.isEditable(day) {
+                            NavigationLink {
+                                IntakeDayView(day: day)
+                            } label: {
+                                cell
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityHint("Doppeltippen zum Bearbeiten")
+                        } else {
+                            cell
+                        }
                     } else {
                         Color.clear.frame(height: 36).accessibilityHidden(true)
                     }
@@ -620,6 +604,11 @@ struct MedicationLogView: View {
                     PlanItemRow(item: item, day: day, time: { intakeTime(for: item, on: day) }) { outcome in
                         planMessage = SupplementTodayView.message(outcome, done: true)
                     }
+                }
+                NavigationLink {
+                    SupplementHistoryView()
+                } label: {
+                    Label("Früheren Tag nachtragen", systemImage: "calendar")
                 }
                 NavigationLink {
                     MedicationPlanEditView()

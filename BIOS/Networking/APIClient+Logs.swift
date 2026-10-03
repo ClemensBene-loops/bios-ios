@@ -42,6 +42,12 @@ extension APIClient {
         try await requestJSON("GET", path: ["v1", "intake"], query: [URLQueryItem(name: "days", value: String(days))])
     }
 
+    /// `GET /v1/intake/day?date=YYYY-MM-DD`: one day with the regimen valid then
+    /// (supplements with `taken`, medication plan items with `taken`/`per_day`).
+    func fetchIntakeDay(date: String) async throws -> JSONValue? {
+        try await requestJSON("GET", path: ["v1", "intake", "day"], query: [URLQueryItem(name: "date", value: date)])
+    }
+
     /// `POST /v1/medications` -> `{"id": ...}`. With `plan_item_id` the server
     /// counts the intake against that plan item (name/dose default to the plan).
     func postMedication(takenAt: String, name: String, dose: String?, note: String?,

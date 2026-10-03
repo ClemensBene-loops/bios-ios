@@ -234,6 +234,13 @@ final class SupplementStore: ObservableObject {
         !pending.isEmpty || pendingItems != nil
     }
 
+    /// Server ticks of one day (GET /v1/intake/day, the regimen of that day);
+    /// queued changes keep winning in `isTaken`.
+    func mergeDay(_ day: String, _ map: [String: Bool]) {
+        intake[day] = map
+        LogQueue.save(intake, Self.intakeFile)
+    }
+
     // MARK: Changes
 
     @discardableResult
@@ -598,10 +605,18 @@ final class MedicationStore: ObservableObject {
         return .synced
     }
 
-    func refresh(days: Int = 30) async {
+    /// Days the list covers (30; a backfilled older day widens it for this session,
+    /// so a reload after a change keeps that day's entries and counters).
+    private(set) var windowDays = 30
+
+    func widen(to days: Int) {
+        windowDays = Swift.max(windowDays, Swift.min(days, 400))
+    }
+
+    func refresh(days: Int? = nil) async {
         guard let client = APIClient.fromConfig() else { return }
         do {
-            guard let json = try await client.fetchMedications(days: days) else { return }
+            guard let json = try await client.fetchMedications(days: days ?? windowDays) else { return }
             var list = json.list("medications")
             if list.isEmpty { list = json.list("items") }
             if list.isEmpty { list = json.list("entries") }

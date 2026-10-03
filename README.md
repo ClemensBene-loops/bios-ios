@@ -257,6 +257,12 @@ The "+" button in the Heute toolbar opens a sheet with three entries:
   time and optional dose (`POST/GET/DELETE /v1/medications`). The list below shows
   the selected day. After every add or delete the app reloads the list and the
   dashboard, so counter, list and Routine card agree. Log only, never dosing advice.
+- **Nachtragen** (v3): in Supplements > "Verlauf und Nachtragen" (also "Früheren Tag
+  nachtragen" under Medikamente) every day of the last 60 opens a day view with a date
+  header: supplements and medication plan of the regimen valid on that day
+  (`GET /v1/intake/day?date=`), same ticks and plan counters as today ("+" uses the next
+  open plan time of that day). Writes go through the same queues (`POST /v1/intake` with
+  `date`, `POST /v1/medications` with `taken_at` on that day). Heute/Gestern stay as before.
 
 All three queue writes on disk when offline and send them later; the dashboard's
 `events` and `intake` blocks reconcile the local state on every refresh.
