@@ -289,6 +289,12 @@ string query ignores case, accents, spaces and hyphens). Synonyms are edited in
 Mehr > Medikamente & Siri or in the plan editor; they live only on the server, never
 in this repository.
 
+Plan items can be limited to weekdays (server field `weekdays`, ISO 1..7, `null` =
+every day; plan editor section "Wochentage" with Mo..So chips). On another weekday the
+item is not expected: counters, the "+" menu, the Live Activity's next intake and the
+health score leave it out, day views show it greyed with "heute nicht geplant", and an
+intake (also via Siri) still records.
+
 Siri answers with a short German confirmation; without network the entry is queued
 and sent when the app is online again.
 
