@@ -44,6 +44,11 @@ struct MedicationPlanItem: Identifiable, Codable, Equatable {
     /// `aliases`. nil = unknown (older cache or server): the PUT then omits the
     /// key and the server keeps what it has.
     var aliases: [String]?
+    /// ISO weekdays the item is planned on (1 = Monday ... 7 = Sunday); server
+    /// field `weekdays`. nil = every day (or an older server/cache): the PUT then
+    /// omits the key and the server keeps what it has. On other days the item
+    /// is not expected (no miss), an intake still records.
+    var weekdays: [Int]?
 
     var id: String { serverID ?? localID.uuidString }
 
@@ -70,6 +75,8 @@ struct MedicationPlanItem: Identifiable, Codable, Equatable {
         if json["aliases"] != nil {
             aliases = json.strings("aliases")
         }
+        let days = Self.cleanWeekdays((json["weekdays"]?.arrayValue ?? []).compactMap { $0.intValue })
+        weekdays = days.isEmpty ? nil : days
     }
 
     /// PUT body entry: missing fields are omitted, `per_day` defaults to the times.
@@ -95,7 +102,46 @@ struct MedicationPlanItem: Identifiable, Codable, Equatable {
         if let aliases {
             object["aliases"] = .array(Self.cleanAliases(aliases, name: name).map { JSONValue.string($0) })
         }
+        if let weekdays {
+            let days = Self.cleanWeekdays(weekdays)
+            // A full week is sent as all seven days (the server stores it as null).
+            object["weekdays"] = .array((days.isEmpty ? Self.allWeekdays : days).map { JSONValue.number(Double($0)) })
+        }
         return .object(object)
+    }
+
+    static let allWeekdays = Array(1...7)
+    /// Short German day names, index 0 = Monday (ISO 1).
+    static let weekdayShort = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
+
+    /// Sorted, unique, only 1...7.
+    static func cleanWeekdays(_ list: [Int]) -> [Int] {
+        Array(Set(list.filter { (1...7).contains($0) })).sorted()
+    }
+
+    /// ISO weekday (1 = Monday ... 7 = Sunday) of "YYYY-MM-DD".
+    static func isoWeekday(_ day: String) -> Int? {
+        guard let date = MedicationPlanStore.startOfDay(day) else { return nil }
+        let weekday = Calendar(identifier: .gregorian).component(.weekday, from: date)   // 1 = Sunday
+        return (weekday + 5) % 7 + 1
+    }
+
+    /// "Mo bis Fr", "Sa, So"; nil = every day.
+    var weekdayText: String? {
+        guard let weekdays else { return nil }
+        let days = Self.cleanWeekdays(weekdays)
+        guard !days.isEmpty, days != Self.allWeekdays else { return nil }
+        if days.count >= 3, days.last! - days.first! == days.count - 1 {
+            return "\(Self.weekdayShort[days.first! - 1]) bis \(Self.weekdayShort[days.last! - 1])"
+        }
+        return days.map { Self.weekdayShort[$0 - 1] }.joined(separator: ", ")
+    }
+
+    /// Planned (expected) on `day`: active then and on one of its weekdays.
+    func isScheduled(on day: String) -> Bool {
+        guard isActive(on: day) else { return false }
+        guard let weekdays, !weekdays.isEmpty, let weekday = Self.isoWeekday(day) else { return true }
+        return weekdays.contains(weekday)
     }
 
     /// Trimmed, without empties, duplicates (case-insensitive) and the name itself,
@@ -156,7 +202,12 @@ struct MedicationPlanItem: Identifiable, Codable, Equatable {
     var scheduleText: String {
         var parts: [String] = []
         if !times.isEmpty { parts.append(times.sorted().joined(separator: ", ")) }
-        parts.append("\(target)x täglich")
+        if let days = weekdayText {
+            parts.append("\(target)x am Tag")
+            parts.append(days)
+        } else {
+            parts.append("\(target)x täglich")
+        }
         return parts.joined(separator: " · ")
     }
 }
@@ -189,8 +240,15 @@ final class MedicationPlanStore: ObservableObject {
         pendingItems ?? items
     }
 
+    /// Items of the plan on `day` within their dates, also on a weekday they
+    /// are not planned on (Siri and logging accept them).
     func activeItems(on day: String) -> [MedicationPlanItem] {
         allItems.filter { $0.isActive(on: day) }
+    }
+
+    /// Items expected on `day` (dates and weekdays): counts and next intake.
+    func scheduledItems(on day: String) -> [MedicationPlanItem] {
+        allItems.filter { $0.isScheduled(on: day) }
     }
 
     /// Intakes of a plan item on a day. Once the medication list is loaded
@@ -246,7 +304,7 @@ final class MedicationPlanStore: ObservableObject {
 
     /// (taken, target) summed over the plan of a day.
     func progress(on day: String) -> (taken: Int, total: Int) {
-        let active = activeItems(on: day)
+        let active = scheduledItems(on: day)
         let done = active.reduce(0) { $0 + Swift.min(self.taken($1, on: day), $1.target) }
         return (done, active.reduce(0) { $0 + $1.target })
     }

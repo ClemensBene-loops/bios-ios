@@ -20,25 +20,37 @@ struct PlanItemRow: View {
 
     @State private var busy = false
 
+    /// Text for an item outside its weekdays: shown greyed, never a miss.
+    static func notPlannedText(_ day: String) -> String {
+        day == EventStore.dayString(Date()) ? "heute nicht geplant" : "an diesem Tag nicht geplant"
+    }
+
     var body: some View {
+        let planned = item.isScheduled(on: day)
         let taken = plan.taken(item, on: day)
         let target = item.target
-        let over = taken > target
-        let done = taken == target
+        let over = planned && taken > target
+        let done = planned && taken == target
         let canRemove = item.serverID.map { medications.latest(planItemID: $0, on: day) != nil } ?? false
         HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.name)
                     .font(.body.weight(.semibold))
+                    .foregroundStyle(planned ? BIOSTheme.text1 : BIOSTheme.text3)
                 if !item.doseText.isEmpty {
                     Text(item.doseText)
                         .font(.footnote)
-                        .foregroundStyle(BIOSTheme.text2)
+                        .foregroundStyle(planned ? BIOSTheme.text2 : BIOSTheme.text3)
                 }
                 Text(item.scheduleText)
                     .font(.caption)
                     .monospacedDigit()
                     .foregroundStyle(BIOSTheme.text3)
+                if !planned {
+                    Text(Self.notPlannedText(day))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(BIOSTheme.text3)
+                }
                 if over {
                     Label("\(taken - target) mehr als geplant", systemImage: "exclamationmark.triangle.fill")
                         .font(.caption.weight(.semibold))
@@ -57,10 +69,10 @@ struct PlanItemRow: View {
             .disabled(!canRemove || busy)
             .accessibilityLabel("Eine Einnahme entfernen")
 
-            Text("\(taken)/\(target)")
+            Text(planned ? "\(taken)/\(target)" : "\(taken)")
                 .font(.headline)
                 .monospacedDigit()
-                .foregroundStyle(over ? BIOSTheme.midText : (done ? BIOSTheme.good : BIOSTheme.text1))
+                .foregroundStyle(over ? BIOSTheme.midText : (done ? BIOSTheme.good : (planned ? BIOSTheme.text1 : BIOSTheme.text3)))
                 .frame(minWidth: 40)
                 .padding(.vertical, 4)
                 .padding(.horizontal, 6)
@@ -71,7 +83,7 @@ struct PlanItemRow: View {
             Button {
                 change(add: true)
             } label: {
-                Image(systemName: over || done ? "plus.circle" : "plus.circle.fill")
+                Image(systemName: !planned || over || done ? "plus.circle" : "plus.circle.fill")
                     .font(.title2)
             }
             .buttonStyle(.borderless)
@@ -82,7 +94,9 @@ struct PlanItemRow: View {
         .foregroundStyle(BIOSTheme.text1)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(item.name)
-        .accessibilityValue("\(EventStore.dayLabel(day)) \(taken) von \(target)" + (over ? ", mehr als geplant" : ""))
+        .accessibilityValue(planned
+            ? "\(EventStore.dayLabel(day)) \(taken) von \(target)" + (over ? ", mehr als geplant" : "")
+            : "\(EventStore.dayLabel(day)) \(Self.notPlannedText(day)), \(taken) eingetragen")
         .accessibilityAdjustableAction { direction in
             switch direction {
             case .increment: change(add: true)
@@ -225,6 +239,13 @@ struct MedicationPlanItemForm: View {
                 Text("Zeiten")
             }
             Section {
+                MedicationWeekdayPicker(days: weekdayBinding)
+            } header: {
+                Text("Wochentage")
+            } footer: {
+                Text("Nur an den markierten Tagen erwartet. An den anderen Tagen zählt der Eintrag nicht als verpasst, eine Einnahme lässt sich trotzdem eintragen.")
+            }
+            Section {
                 Toggle("Aktiv ab", isOn: FormBindings.hasDate($item.activeFrom))
                 if item.activeFrom != nil {
                     DatePicker("ab", selection: FormBindings.dateBinding($item.activeFrom), displayedComponents: .date)
@@ -259,6 +280,15 @@ struct MedicationPlanItemForm: View {
         )
     }
 
+    /// All seven days while `weekdays` is nil (every day); a full week stays a
+    /// list once touched, so the PUT sends it and the server stores null.
+    private var weekdayBinding: Binding<[Int]> {
+        Binding<[Int]>(
+            get: { item.weekdays.map { MedicationPlanItem.cleanWeekdays($0) } ?? MedicationPlanItem.allWeekdays },
+            set: { item.weekdays = MedicationPlanItem.cleanWeekdays($0) }
+        )
+    }
+
     private func timeBinding(_ index: Int) -> Binding<Date> {
         Binding<Date>(
             get: {
@@ -270,6 +300,55 @@ struct MedicationPlanItemForm: View {
                 item.times[index] = FormBindings.time(from: value)
             }
         )
+    }
+}
+
+// MARK: - Weekdays
+
+/// Mo ... So chips for the weekdays of a plan item (server field `weekdays`).
+/// At least one day stays selected; all seven = every day.
+struct MedicationWeekdayPicker: View {
+    @Binding var days: [Int]
+    private static let longNames = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                ForEach(1...7, id: \.self) { day in
+                    let on = days.contains(day)
+                    Button {
+                        toggle(day)
+                    } label: {
+                        Text(MedicationPlanItem.weekdayShort[day - 1])
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity, minHeight: 34)
+                            .foregroundStyle(on ? BIOSTheme.background : BIOSTheme.text2)
+                            .background(Capsule().fill(on ? BIOSTheme.accent : BIOSTheme.card2))
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel(Self.longNames[day - 1])
+                    .accessibilityAddTraits(on ? .isSelected : [])
+                }
+            }
+            HStack(spacing: 16) {
+                Button("Täglich") { days = MedicationPlanItem.allWeekdays }
+                    .disabled(days == MedicationPlanItem.allWeekdays)
+                Button("Mo bis Fr") { days = [1, 2, 3, 4, 5] }
+                    .disabled(days == [1, 2, 3, 4, 5])
+            }
+            .font(.footnote)
+            .buttonStyle(.borderless)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func toggle(_ day: Int) {
+        if days.contains(day) {
+            guard days.count > 1 else { return }
+            days.removeAll { $0 == day }
+        } else {
+            days = (days + [day]).sorted()
+        }
     }
 }
 

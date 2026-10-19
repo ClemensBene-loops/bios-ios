@@ -384,9 +384,14 @@ enum LogIntentRunner {
         case .synced, .queued:
             let taken = plan.taken(item, on: day)
             let target = item.target
-            var text = "Eingetragen: \(item.name), heute \(taken) von \(target)"
-            if taken > target {
-                text += ", mehr als geplant"
+            var text: String
+            if item.isScheduled(on: day) {
+                text = "Eingetragen: \(item.name), heute \(taken) von \(target)"
+                if taken > target {
+                    text += ", mehr als geplant"
+                }
+            } else {
+                text = "Eingetragen: \(item.name), heute nicht geplant"
             }
             text += "."
             if case .queued = outcome {
@@ -426,7 +431,8 @@ enum LogIntentRunner {
         switch outcome {
         case .synced, .queued:
             let taken = store.taken(item, on: day)
-            let progress = calendar.isDateInToday(date) ? ", heute \(taken) von \(item.target)" : ""
+            let progress = !calendar.isDateInToday(date) ? ""
+                : (item.isScheduled(on: day) ? ", heute \(taken) von \(item.target)" : ", heute nicht geplant")
             if case .queued = outcome {
                 return "\(what) \(when) gespeichert\(progress). Wird nachgereicht, sobald BIOS online ist."
             }

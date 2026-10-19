@@ -579,7 +579,10 @@ struct MedicationLogView: View {
         let day = SupplementTodayView.day(offset: dayOffset)
         let isToday = dayOffset == 0
         let recent = Array(store.dayEntries(day).prefix(50))
-        let planItems = plan.activeItems(on: day)
+        // Planned items first, then those outside their weekdays (greyed, still loggable).
+        let dayItems = plan.activeItems(on: day)
+        let planItems = dayItems.filter { $0.isScheduled(on: day) } + dayItems.filter { !$0.isScheduled(on: day) }
+        let plannedCount = dayItems.filter { $0.isScheduled(on: day) }.count
         List {
             Section {
                 Picker("Tag", selection: $dayOffset) {
@@ -594,7 +597,7 @@ struct MedicationLogView: View {
                     DatePicker("Uhrzeit", selection: $planTime, displayedComponents: [.hourAndMinute])
                 }
 
-                if planItems.isEmpty {
+                if plannedCount == 0 {
                     Text(plan.allItems.isEmpty
                          ? "Noch kein Plan. Unter Plan bearbeiten anlegen."
                          : (isToday ? "Heute nichts geplant." : "Gestern nichts geplant."))

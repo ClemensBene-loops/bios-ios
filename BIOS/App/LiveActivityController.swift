@@ -534,7 +534,7 @@ final class LiveActivityController: ObservableObject {
 
         // Next intake: first open plan time today (per item the first `taken` times are done).
         let plan = MedicationPlanStore.shared
-        let items = plan.activeItems(on: today)
+        let items = plan.scheduledItems(on: today)
         if items.isEmpty, let current {
             state.nextMedication = current.nextMedication
         } else {

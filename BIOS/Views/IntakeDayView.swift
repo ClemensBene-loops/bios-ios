@@ -42,7 +42,10 @@ final class IntakeDayModel: ObservableObject {
                 }
             }
             SupplementStore.shared.mergeDay(day, map)
-            planItems = (json.obj("medication_plan")?.list("items") ?? []).compactMap { MedicationPlanItem(json: $0) }
+            // Planned items, then those outside their weekdays (`not_scheduled`, greyed, never a miss).
+            let planBlock = json.obj("medication_plan")
+            planItems = ((planBlock?.list("items") ?? []) + (planBlock?.list("not_scheduled") ?? []))
+                .compactMap { MedicationPlanItem(json: $0) }
             loadError = nil
         } catch {
             if !ErrorKind.isCancellation(error) {
@@ -71,7 +74,8 @@ struct IntakeDayView: View {
     var body: some View {
         let day = model.day
         let items = model.supplements ?? supplements.activeItems(on: day)
-        let planItems = model.planItems ?? plan.activeItems(on: day)
+        let dayPlan = model.planItems ?? plan.activeItems(on: day)
+        let planItems = dayPlan.filter { $0.isScheduled(on: day) } + dayPlan.filter { !$0.isScheduled(on: day) }
         let taken = items.filter { supplements.isTaken($0, on: day) }.count
         let complete = !items.isEmpty && taken == items.count
         let entries = medications.dayEntries(day)
