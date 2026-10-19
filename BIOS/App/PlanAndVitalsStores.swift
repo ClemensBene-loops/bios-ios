@@ -121,8 +121,12 @@ struct MedicationPlanItem: Identifiable, Codable, Equatable {
 
     /// ISO weekday (1 = Monday ... 7 = Sunday) of "YYYY-MM-DD".
     static func isoWeekday(_ day: String) -> Int? {
-        guard let date = MedicationPlanStore.startOfDay(day) else { return nil }
-        let weekday = Calendar(identifier: .gregorian).component(.weekday, from: date)   // 1 = Sunday
+        let parts = day.prefix(10).split(separator: "-").compactMap { Int($0) }
+        let calendar = Calendar(identifier: .gregorian)
+        guard parts.count == 3,
+              let date = calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2], hour: 12))
+        else { return nil }
+        let weekday = calendar.component(.weekday, from: date)   // 1 = Sunday
         return (weekday + 5) % 7 + 1
     }
 
