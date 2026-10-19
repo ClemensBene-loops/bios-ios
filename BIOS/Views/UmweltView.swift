@@ -178,14 +178,15 @@ struct VirusRegionCard: View {
     }
 }
 
-/// Forecast card: per allergen four level dots with weekday and level word.
+/// Forecast card: per allergen the 7-day window (level dot, weekday, level word).
+/// CAMS forecasts 3 to 4 days; the rest are erwartet days (dashed, grey, footnote).
 struct PollenForecastCard: View {
     let pollen: PollenModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline) {
-                Text("\(pollen.place), nächste 4 Tage")
+                Text("\(pollen.place), nächste \(pollen.horizonDays) Tage")
                     .font(.headline)
                 Spacer()
                 Text("Modell CAMS")
@@ -200,38 +201,20 @@ struct PollenForecastCard: View {
                     .padding(.vertical, 8)
             }
             ForEach(pollen.allergens) { allergen in
-                HStack(alignment: .center, spacing: 8) {
-                    Text(allergen.name)
-                        .font(.subheadline.weight(.semibold))
-                        .frame(minWidth: 62, alignment: .leading)
-                    ForEach(allergen.forecast.prefix(4)) { day in
-                        VStack(spacing: 3) {
-                            PollenDot(rank: day.levelRank)
-                            Text(dayText(day))
-                                .font(.caption2)
-                                .foregroundStyle(BIOSTheme.text2)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.7)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(dayText(day))
+                PollenWeekRow(allergen: allergen)
+                    .padding(.vertical, 10)
+                    .overlay(alignment: .top) {
+                        Rectangle().fill(BIOSTheme.separator).frame(height: 0.5)
                     }
-                }
-                .padding(.vertical, 10)
-                .overlay(alignment: .top) {
-                    Rectangle().fill(BIOSTheme.separator).frame(height: 0.5)
-                }
-                .accessibilityElement(children: .combine)
+            }
+            if pollen.hasExpected {
+                CaptionText(text: "Gestrichelt: "
+                    + (pollen.expectedNote ?? "erwartet, typisch für diese Tage, keine Vorhersage") + ".")
+                    .padding(.top, 6)
             }
         }
         .foregroundStyle(BIOSTheme.text1)
         .biosCard()
-    }
-
-    private func dayText(_ day: PollenDay) -> String {
-        let name = day.date.map { BIOSFormat.weekdayShort($0) } ?? ""
-        return "\(name) · \(day.level)"
     }
 }
 
@@ -265,6 +248,16 @@ struct AllergyCard: View {
                     }
                 }
                 .accessibilityElement(children: .combine)
+                if let hint = allergy.orderHint {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "cart")
+                            .foregroundStyle(BIOSTheme.mid)
+                        Text(hint)
+                            .font(.subheadline)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .accessibilityElement(children: .combine)
+                }
                 HStack(alignment: .top, spacing: 10) {
                     Image(systemName: "pills")
                         .foregroundStyle(BIOSTheme.text2)

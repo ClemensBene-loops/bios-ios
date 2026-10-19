@@ -152,9 +152,9 @@ struct TripPollen {
         note = json.str("note")
     }
 
-    /// Allergens with at least one forecast day.
+    /// Allergens with at least one day (forecast or erwartet).
     var allergensWithDays: [PollenAllergen] {
-        model.allergens.filter { !$0.forecast.isEmpty }
+        model.allergens.filter { !$0.days.isEmpty }
     }
 
     /// Calm text when there are no days (note, else reason).

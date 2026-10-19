@@ -420,29 +420,73 @@ struct StatGrid<Content: View>: View {
 }
 
 /// Pollen level dot: size AND color encode the level (0 keine ... 3 hoch).
+/// `expected`: an erwartet day (typical for these days, no forecast) gets a dashed
+/// ring and a paler fill, so it never reads like a forecast.
 struct PollenDot: View {
     let rank: Int
+    var expected: Bool = false
+    var size: CGFloat = 15
 
     var body: some View {
         let color = BIOSLevel.pollenColor(rank)
         ZStack {
+            if expected {
+                Circle()
+                    .strokeBorder(BIOSTheme.text3, style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
+            } else {
+                Circle()
+                    .strokeBorder(Color.white.opacity(rank >= 3 ? 0 : 0.2), lineWidth: 1.5)
+            }
             Circle()
-                .strokeBorder(Color.white.opacity(rank >= 3 ? 0 : 0.2), lineWidth: 1.5)
-            Circle()
-                .fill(color)
+                .fill(color.opacity(expected ? 0.45 : 1))
                 .frame(width: innerSize, height: innerSize)
         }
-        .frame(width: 15, height: 15)
+        .frame(width: size, height: size)
         .accessibilityHidden(true)
     }
 
     private var innerSize: CGFloat {
+        let scale = size / 15
         switch rank {
-        case 1: return 5
-        case 2: return 9
-        case 3...: return 15
+        case 1: return 5 * scale
+        case 2: return 9 * scale
+        case 3...: return size
         default: return 0
         }
+    }
+}
+
+/// One allergen row of the pollen window: name, then per day a dot, the weekday and
+/// the level word (erwartet days dashed and grey). Used by the Umwelt card and trips.
+struct PollenWeekRow: View {
+    let allergen: PollenAllergen
+    var limit: Int = 7
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 4) {
+            Text(allergen.name)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .frame(minWidth: 52, alignment: .leading)
+            ForEach(allergen.days.prefix(limit)) { day in
+                VStack(spacing: 2) {
+                    PollenDot(rank: day.levelRank, expected: day.isExpected)
+                    Text(day.date.map { BIOSFormat.weekdayShort($0) } ?? "")
+                        .font(.caption2)
+                        .foregroundStyle(BIOSTheme.text2)
+                    Text(day.level)
+                        .font(.caption2)
+                        .italic(day.isExpected)
+                        .foregroundStyle(day.isExpected ? BIOSTheme.text3 : BIOSTheme.text2)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                }
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(allergen.name + ": " + allergen.days.prefix(limit).map(\.spokenText).joined(separator: ", "))
     }
 }
 

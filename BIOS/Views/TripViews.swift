@@ -265,8 +265,8 @@ struct TripWastewaterCard: View {
     }
 }
 
-/// Pollen of the trip days per allergen (dot, weekday, level), or the note
-/// when the trip lies beyond the 4-day forecast.
+/// Pollen of the trip days per allergen (dot, weekday, level; erwartet days dashed),
+/// or the note when the trip lies beyond the forecast and the 7-day window.
 struct TripPollenCard: View {
     let pollen: TripPollen
 
@@ -286,31 +286,17 @@ struct TripPollenCard: View {
                 .accessibilityElement(children: .combine)
             }
             ForEach(Array(allergens.enumerated()), id: \.element.id) { entry in
-                let allergen = entry.element
-                HStack(alignment: .center, spacing: 8) {
-                    Text(allergen.name)
-                        .font(.subheadline.weight(.semibold))
-                        .frame(minWidth: 62, alignment: .leading)
-                    ForEach(allergen.forecast.prefix(4)) { day in
-                        VStack(spacing: 3) {
-                            PollenDot(rank: day.levelRank)
-                            Text(dayText(day))
-                                .font(.caption2)
-                                .foregroundStyle(BIOSTheme.text2)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.7)
+                PollenWeekRow(allergen: entry.element)
+                    .padding(.vertical, 10)
+                    .overlay(alignment: .top) {
+                        if entry.offset > 0 {
+                            Rectangle().fill(BIOSTheme.separator).frame(height: 0.5)
                         }
-                        .frame(maxWidth: .infinity)
                     }
-                }
-                .padding(.vertical, 10)
-                .overlay(alignment: .top) {
-                    if entry.offset > 0 {
-                        Rectangle().fill(BIOSTheme.separator).frame(height: 0.5)
-                    }
-                }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(allergen.name + ": " + allergen.forecast.prefix(4).map { dayText($0) }.joined(separator: ", "))
+            }
+            if !allergens.isEmpty, pollen.model.hasExpected {
+                CaptionText(text: "Gestrichelt: erwartet, typisch für diese Tage, keine Vorhersage.")
+                    .padding(.top, 8)
             }
             if !allergens.isEmpty, let note = pollen.note {
                 CaptionText(text: note)
@@ -320,10 +306,5 @@ struct TripPollenCard: View {
         .foregroundStyle(BIOSTheme.text1)
         .frame(maxWidth: .infinity, alignment: .leading)
         .biosCard()
-    }
-
-    private func dayText(_ day: PollenDay) -> String {
-        let name = day.date.map { BIOSFormat.weekdayShort($0) } ?? ""
-        return "\(name) · \(day.level)"
     }
 }

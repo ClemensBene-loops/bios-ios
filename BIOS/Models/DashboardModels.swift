@@ -591,6 +591,12 @@ struct PollenDay: Identifiable {
     let max: Double?
     let level: String
     let levelRank: Int
+    /// `vorhersage` (CAMS model) or `erwartet` (typical level of the same days in
+    /// earlier years, no forecast); older servers send no kind = forecast.
+    let kind: String
+    /// Erwartet only: number of earlier years behind the value, and how many of them reached mittel.
+    let years: Int?
+    let yearsMittel: Int?
 
     init(json: JSONValue, index: Int) {
         let raw = json.str("date")
@@ -601,6 +607,17 @@ struct PollenDay: Identifiable {
         let level = json.str("level") ?? "keine"
         self.level = level
         levelRank = json.int("level_rank") ?? PollenDay.rank(level)
+        kind = json.str("kind") ?? "vorhersage"
+        years = json.int("years")
+        yearsMittel = json.int("years_mittel")
+    }
+
+    var isExpected: Bool { kind == "erwartet" }
+
+    /// "Mo mittel" or "Do erwartet niedrig" (VoiceOver).
+    var spokenText: String {
+        let name = date.map { BIOSFormat.weekdayShort($0) } ?? ""
+        return isExpected ? "\(name) erwartet \(level)" : "\(name) \(level)"
     }
 
     static func rank(_ level: String) -> Int {
@@ -620,11 +637,14 @@ struct PollenAllergen: Identifiable {
     let thresholdMittel: Double?
     let thresholdHoch: Double?
     let forecast: [PollenDay]
+    /// 7-day window: forecast days plus `erwartet` days (server `days`, else the forecast).
+    let days: [PollenDay]
     let seasonStart: String?
     let seasonEnd: String?
     let inSeason: Bool
     let maxLevel: String?
     let maxLevelRank: Int?
+    let maxLevel7d: String?
 
     init?(json: JSONValue) {
         guard let allergen = json.str("allergen") ?? json.str("name") else { return nil }
@@ -634,18 +654,27 @@ struct PollenAllergen: Identifiable {
         let thresholds = json.obj("thresholds")
         thresholdMittel = thresholds?.double("mittel")
         thresholdHoch = thresholds?.double("hoch")
-        forecast = json.list("forecast").enumerated().map { PollenDay(json: $0.element, index: $0.offset) }
+        let forecast = json.list("forecast").enumerated().map { PollenDay(json: $0.element, index: $0.offset) }
+        self.forecast = forecast
+        let week = json.list("days").enumerated().map { PollenDay(json: $0.element, index: $0.offset) }
+        days = week.isEmpty ? forecast : week
         let season = json.obj("season")
         seasonStart = season?.str("start")
         seasonEnd = season?.str("end")
         inSeason = json.flag("in_season")
         maxLevel = json.str("max_level")
         maxLevelRank = json.int("max_level_rank")
+        maxLevel7d = json.str("max_level_7d")
     }
 
     /// Highest forecast level as word (server `max_level`, else from the days).
     var maxLevelText: String {
         maxLevel ?? worstForecast?.level ?? "n. v."
+    }
+
+    /// Highest level of the 7-day window (forecast and erwartet).
+    var maxLevel7dText: String {
+        maxLevel7d ?? days.max { $0.levelRank < $1.levelRank }?.level ?? maxLevelText
     }
 
     /// Highest forecast level (by rank).
@@ -671,6 +700,10 @@ struct AllergyModel {
     let place: String?
     let allergens: [String]
     let reasons: [String]
+    /// "Allergie-Medikamente rechtzeitig bestellen: Birke ab Do 23.10. voraussichtlich mittel." (since 19.10.2026)
+    let orderHint: String?
+    /// Erwartet days >= mittel (typical for these days, never part of `active`).
+    let expectedReasons: [String]
 
     init(json: JSONValue) {
         active = json.flag("active")
@@ -681,6 +714,8 @@ struct AllergyModel {
         }
         allergens = names
         reasons = json.strings("reasons")
+        orderHint = json.str("order_hint")
+        expectedReasons = json.strings("expected_reasons")
     }
 }
 
@@ -691,6 +726,10 @@ struct PollenModel: Identifiable {
     let generatedAt: Date?
     let evaluable: Bool
     let reason: String?
+    /// Days of the window (7 since 19.10.2026; older servers: 4 forecast days).
+    let horizonDays: Int
+    /// "Ab 22.10. erwartet: typisch für diese Tage (2021 bis 2025), keine Vorhersage".
+    let expectedNote: String?
 
     var id: String { place }
 
@@ -701,11 +740,23 @@ struct PollenModel: Identifiable {
         generatedAt = BIOSDate.parse(json.str("generated_at"))
         evaluable = json.flag("evaluable", fallback: true)
         reason = json.str("reason")
+        horizonDays = json.int("horizon_days") ?? 4
+        expectedNote = json.str("expected_note")
     }
 
     /// Forecast dates of the first allergen (column headers).
     var forecastDates: [Date?] {
         allergens.first?.forecast.map { $0.date } ?? []
+    }
+
+    /// Dates of the 7-day window of the first allergen (column headers).
+    var weekDays: [PollenDay] {
+        allergens.first?.days ?? []
+    }
+
+    /// True when the window holds erwartet days.
+    var hasExpected: Bool {
+        allergens.contains { $0.days.contains { $0.isExpected } }
     }
 }
 

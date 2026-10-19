@@ -155,7 +155,8 @@ struct VirenDetailView: View {
 }
 
 /// Detail "Pollen": forecast cards, per allergen 7 measured days plus the
-/// 4 forecast days as lighter bars, thresholds as reference lines, allergy.
+/// 7-day window as lighter bars (erwartet days paler than the forecast),
+/// thresholds as reference lines, allergy.
 struct PollenDetailView: View {
     @EnvironmentObject var dashboardStore: DashboardStore
 
@@ -201,11 +202,12 @@ struct PollenAllergenChart: View {
                 label: allergen.name,
                 icon: "camera.macro",
                 color: BIOSTheme.pollen,
-                value: allergen.maxLevelText,
-                sub: "höchste Stufe\nnächste 4 Tage",
+                value: allergen.maxLevel7dText,
+                sub: "höchste Stufe\nnächste 7 Tage",
                 legend: [
                     LegendItem(color: BIOSTheme.pollen, text: "gemessen"),
                     LegendItem(color: BIOSTheme.pollen, text: "Vorhersage", opacity: 0.5),
+                    LegendItem(color: BIOSTheme.pollen, text: "erwartet", opacity: 0.22),
                 ],
                 foot: footText
             ) {
@@ -217,7 +219,7 @@ struct PollenAllergenChart: View {
                     )
                 } else {
                     BIOSChart(spec: spec)
-                        .accessibilityLabel("\(allergen.name)pollen, 7 Tage gemessen und 4 Tage Vorhersage, Körner pro Kubikmeter")
+                        .accessibilityLabel("\(allergen.name)pollen, 7 Tage gemessen, dann Vorhersage und erwartete Tage, Körner pro Kubikmeter")
                 }
             }
         }
@@ -225,6 +227,9 @@ struct PollenAllergenChart: View {
 
     private var footText: String {
         var text = "Tagesmittel in Körnern/m³."
+        if allergen.days.contains(where: { $0.isExpected }) {
+            text += " Vorhersage (CAMS) nur 3 bis 4 Tage, danach erwartet: typisch für diese Tage in früheren Jahren, keine Vorhersage."
+        }
         if let season = allergen.seasonText {
             text += " Saison typisch \(season)."
         }
@@ -234,7 +239,7 @@ struct PollenAllergenChart: View {
     static func spec(allergen: PollenAllergen, measured: SeriesModel?) -> ChartSpec {
         var spec = ChartSpec()
         spec.unit = .day
-        spec.rangeDays = 11
+        spec.rangeDays = 14
         spec.height = 140
         spec.yMin = 0
         spec.valueUnit = "Körner/m³"
@@ -243,14 +248,15 @@ struct PollenAllergenChart: View {
         var bars = ChartSpec.barPoints(measuredPoints) { _ in BIOSTheme.pollen }
         let lastMeasured = measuredPoints.filter { $0.value != nil }.map(\.date).max()
         var firstForecast: Date?
-        for day in allergen.forecast {
+        for day in allergen.days {
             guard let date = day.date, let mean = day.mean else { continue }
             if let lastMeasured, calendar.startOfDay(for: date) <= calendar.startOfDay(for: lastMeasured) {
                 continue
             }
             if firstForecast == nil { firstForecast = date }
-            bars.append(ChartBarPoint(id: 1000 + bars.count, date: date, value: mean, color: BIOSTheme.pollen, opacity: 0.5,
-                                      label: "Vorhersage"))
+            bars.append(ChartBarPoint(id: 1000 + bars.count, date: date, value: mean, color: BIOSTheme.pollen,
+                                      opacity: day.isExpected ? 0.22 : 0.5,
+                                      label: day.isExpected ? "erwartet" : "Vorhersage"))
         }
         spec.bars = bars
         if let firstForecast {

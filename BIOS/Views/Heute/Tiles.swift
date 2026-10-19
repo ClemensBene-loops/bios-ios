@@ -176,23 +176,29 @@ struct PollenTile: View {
                             .lineLimit(1)
                             .minimumScaleFactor(0.8)
                         Spacer(minLength: 2)
-                        ForEach(allergen.forecast.prefix(4)) { day in
-                            PollenDot(rank: day.levelRank)
+                        HStack(spacing: 3) {
+                            ForEach(allergen.days.prefix(7)) { day in
+                                PollenDot(rank: day.levelRank, expected: day.isExpected, size: 12)
+                            }
                         }
                     }
-                    .frame(minHeight: 24)
+                    .frame(minHeight: 22)
                 }
                 HStack(spacing: 6) {
                     Spacer(minLength: 2)
-                    ForEach(Array(pollen.forecastDates.prefix(4).enumerated()), id: \.offset) { entry in
-                        Text(entry.element.map { BIOSFormat.weekdayShort($0) } ?? "")
-                            .frame(width: 15)
+                    HStack(spacing: 3) {
+                        ForEach(pollen.weekDays.prefix(7)) { day in
+                            Text(day.date.map { String(BIOSFormat.weekdayShort($0).prefix(1)) } ?? "")
+                                .italic(day.isExpected)
+                                .frame(width: 12)
+                        }
                     }
                 }
                 .font(.caption2)
                 .foregroundStyle(BIOSTheme.text3)
                 if let allergy = pollen.allergy {
-                    CaptionText(text: allergy.active ? "Allergie aktiv" : "Allergie nicht aktiv")
+                    CaptionText(text: allergy.orderHint != nil ? "Allergiemittel bestellen"
+                        : (allergy.active ? "Allergie aktiv" : "Allergie nicht aktiv"))
                 }
             } else {
                 NoDataTileContent(reason: pollen?.reason ?? "Keine Pollenvorhersage")
@@ -211,15 +217,15 @@ struct PollenTile: View {
     private var accessibilityText: String {
         guard let pollen, !pollen.allergens.isEmpty else { return "Pollen, keine Daten" }
         let rows = pollen.allergens.map { allergen -> String in
-            let days = allergen.forecast.prefix(4).map { day -> String in
-                let name = day.date.map { BIOSFormat.weekdayShort($0) } ?? ""
-                return "\(name) \(day.level)"
-            }
+            let days = allergen.days.prefix(7).map(\.spokenText)
             return "\(allergen.name) \(days.joined(separator: ", "))"
         }
-        var text = "Pollen \(pollen.place), nächste 4 Tage: " + rows.joined(separator: "; ")
+        var text = "Pollen \(pollen.place), nächste \(pollen.horizonDays) Tage: " + rows.joined(separator: "; ")
         if let allergy = pollen.allergy {
             text += allergy.active ? ". Allergie aktiv" : ". Allergie nicht aktiv"
+            if let hint = allergy.orderHint {
+                text += ". " + hint
+            }
         }
         return text
     }

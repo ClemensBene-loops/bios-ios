@@ -75,7 +75,11 @@ labels, no third-party dependencies (Swift Charts and PDFKit are Apple's).
   card falls back to the dashboard `vitals` (last reading, today's maximum). Push
   `bios.detail` `temperatur` (aliases `temperature`, `body_temp`, `fieber`) opens it.
 - **Umwelt**: viruses in wastewater (Wien, Germany) with fine trend arrows, pollen
-  forecast for the next 4 days, "Reiseziele" (`environment.trips`: destinations of
+  for the next 7 days (`days[]` since 19.10.2026: CAMS forecasts 3 to 4 days, the rest
+  are `kind: erwartet` days, typical for these days in earlier years, drawn dashed and
+  grey with the server's `expected_note`; older servers: the forecast only), the
+  allergy block's `order_hint` ("Allergie-Medikamente rechtzeitig bestellen: ...")
+  with a cart symbol, "Reiseziele" (`environment.trips`: destinations of
   the next 14 days from the calendar, city and dates only; kind symbol, the
   server's `line`, a sheet with wastewater per virus of the nearest plant or
   region incl. distance, note and source, and the pollen of the trip days; when
