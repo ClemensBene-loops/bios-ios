@@ -335,9 +335,19 @@ category, answers the buttons and edits the settings. **Default off.**
   the switch reverts and a calm line shows the server's 422 text if it is rejected.
   `GET /v1/nudge` is cached like the dashboard (DiskCache key `nudge`); a server
   without the endpoint (404) shows "Server kennt Stupser noch nicht".
-- **Krafttraining line on Heute**: if `/v1/dashboard` carries `training.strength`
-  (`last_at`, `days_since`, `note`), a calm card under the tiles says "Letztes
-  Krafttraining vor N Tagen" with the server's note; absent means no line.
+- **Training card on Heute** (since 24.10.2026): under the tiles a calm card says
+  "Letztes Krafttraining vor N Tagen" with the server's note (`training.strength`,
+  `manual` = entered by hand), lists up to 3 workouts of `training.recent` (manual
+  ones deletable via the "…" menu with a confirmation) and has a "+" for a new entry.
+- **Training eintragen** (no Whoop worn): "+" menu row and the card's "+" open
+  `WorkoutLogView` (`BIOS/Views/WorkoutViews.swift`, store `BIOS/App/WorkoutStore.swift`,
+  models `BIOS/Models/WorkoutModels.swift`): kind picker (Whoop sport names), start
+  (default now minus 60 min), duration stepper (default 60, last used remembered),
+  muscle group chips for strength kinds, intensity chips, short note; below the
+  workouts of 14 days (`GET /v1/workouts`), manual ones swipe to delete. Saves go
+  straight to `POST /v1/workouts` (no offline queue; the id comes from start and kind,
+  so a retry never doubles), then the dashboard and body maps reload. Siri:
+  "Krafttraining in BIOS" asks for the minutes (start = now minus the duration).
 
 ### Labor (lab values and documents)
 

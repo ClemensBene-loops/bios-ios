@@ -377,12 +377,15 @@ struct StrengthModel: Equatable {
     let lastAt: Date?
     let daysSince: Int?
     let note: String?
+    /// The newest strength workout was entered by hand (`manual`, since 24.10.2026).
+    let manual: Bool
 
     init?(json: JSONValue?) {
         guard let json, json.objectValue != nil else { return nil }
         lastAt = BIOSDate.parse(json.str("last_at"))
         daysSince = json.int("days_since")
         note = json.str("note")
+        manual = json.flag("manual")
         if lastAt == nil && daysSince == nil && note == nil { return nil }
     }
 

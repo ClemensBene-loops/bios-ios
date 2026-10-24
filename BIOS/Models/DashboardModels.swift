@@ -118,6 +118,8 @@ struct DashboardModel {
     let bodymap: BodyMapSummaryModel?
     /// Last strength training (`training.strength`, V3c, optional; nil hides the line).
     let strength: StrengthModel?
+    /// Workouts of the last 14 days (`training.recent`, since 24.10.2026; Whoop and manual).
+    let recentWorkouts: [WorkoutItem]
     /// Labor block (`labs`, V4, optional; the Heute card shows only when something is open).
     let labs: DashboardLabsModel?
 
@@ -143,6 +145,8 @@ struct DashboardModel {
         let tiles = json.obj("tiles")
         strength = StrengthModel(json: json.obj("training")?.obj("strength")
             ?? tiles?.obj("training")?.obj("strength"))
+        recentWorkouts = (json.obj("training") ?? tiles?.obj("training"))?.list("recent")
+            .compactMap { WorkoutItem(json: $0) } ?? []
         if let wien = tiles?.obj("viruses_wien") {
             virusesWien = VirusRegionModel(json: wien, key: "abwasser_wien")
         } else {

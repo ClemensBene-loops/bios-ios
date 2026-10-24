@@ -286,6 +286,24 @@ struct LogTemperatureIntent: AppIntent {
     }
 }
 
+// MARK: - Workout
+
+/// Strength training that just ended (no Whoop worn): start = now minus the duration.
+struct LogStrengthIntent: AppIntent {
+    static let title: LocalizedStringResource = "Krafttraining eintragen"
+
+    @Parameter(title: "Dauer in Minuten", description: "z. B. 60",
+               requestValueDialog: IntentDialog("Wie viele Minuten? Zum Beispiel 60."))
+    var minutes: Int
+
+    init() {}
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let text = await LogIntentRunner.strength(minutes: minutes)
+        return .result(dialog: "\(text)")
+    }
+}
+
 // MARK: - Runner (shared stores, offline safe)
 
 enum LogIntentRunner {
@@ -457,6 +475,20 @@ enum LogIntentRunner {
         }
     }
 
+    @MainActor
+    static func strength(minutes: Int) async -> String {
+        let duration = min(max(minutes, 5), 300)
+        let outcome = await WorkoutStore.shared.add(kind: "weightlifting",
+                                                    start: Date().addingTimeInterval(-Double(duration) * 60),
+                                                    durationMin: duration, muscleGroup: nil, intensity: nil, note: nil)
+        switch outcome {
+        case .synced, .queued:
+            return "Krafttraining \(duration) Minuten in BIOS eingetragen."
+        case .failed(let message):
+            return "Nicht gespeichert: \(message)."
+        }
+    }
+
     /// Queues and sends the mark through the shared EventStore (offline safe),
     /// returns the German confirmation Siri speaks.
     @MainActor
@@ -566,6 +598,16 @@ struct BIOSShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Temperatur eintragen",
             systemImageName: "thermometer"
+        )
+        AppShortcut(
+            intent: LogStrengthIntent(),
+            phrases: [
+                "Krafttraining in \(.applicationName)",
+                "\(.applicationName) Krafttraining",
+                "Training in \(.applicationName) eintragen",
+            ],
+            shortTitle: "Krafttraining eintragen",
+            systemImageName: "dumbbell"
         )
     }
 }

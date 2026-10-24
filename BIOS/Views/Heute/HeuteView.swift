@@ -88,8 +88,12 @@ struct HeuteView: View {
                     }
                 }
 
-                if let strength = dashboard?.strength, strength.headline != nil {
-                    StrengthLine(strength: strength)
+                if let dashboard {
+                    // Training: last strength session, recent workouts, "+" for a manual entry
+                    TrainingCard(strength: dashboard.strength?.headline != nil ? dashboard.strength : nil,
+                                 recent: dashboard.recentWorkouts) {
+                        quickLog = .workout
+                    }
                 }
 
                 Text("Beobachtung, keine Diagnose")

@@ -89,6 +89,21 @@ extension APIClient {
         try await requestJSON("GET", path: ["v1", "vitals"], query: [URLQueryItem(name: "days", value: String(days))])
     }
 
+    /// `POST /v1/workouts` (manual workout) -> `{"id", "item"}`.
+    func postWorkout(_ body: JSONValue) async throws -> JSONValue? {
+        try await requestJSON("POST", path: ["v1", "workouts"], body: body)
+    }
+
+    /// `DELETE /v1/workouts/{id}` (manual entries only)
+    func deleteWorkout(id: String) async throws {
+        _ = try await requestJSON("DELETE", path: ["v1", "workouts", id])
+    }
+
+    /// `GET /v1/workouts?days=N`: Whoop plus manual workouts, newest first.
+    func fetchWorkouts(days: Int) async throws -> JSONValue? {
+        try await requestJSON("GET", path: ["v1", "workouts"], query: [URLQueryItem(name: "days", value: String(days))])
+    }
+
     /// `DELETE /v1/medications/{id}`
     func deleteMedication(id: String) async throws {
         _ = try await requestJSON("DELETE", path: ["v1", "medications", id])

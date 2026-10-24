@@ -8,6 +8,7 @@ enum QuickLogTarget: String, Identifiable {
     case medications
     case temperature
     case bloodPressure
+    case workout
 
     var id: String { rawValue }
 }
@@ -27,6 +28,7 @@ struct QuickLogSheet: View {
                 case .medications: MedicationLogView()
                 case .temperature: TemperatureLogView()
                 case .bloodPressure: BloodPressureLogView()
+                case .workout: WorkoutLogView()
                 }
             }
             .toolbar {
@@ -48,6 +50,7 @@ struct QuickLogMenu: View {
     @EnvironmentObject var medications: MedicationStore
     @EnvironmentObject var plan: MedicationPlanStore
     @EnvironmentObject var vitals: VitalsStore
+    @ObservedObject private var workouts = WorkoutStore.shared
 
     var body: some View {
         let today = EventStore.dayString(Date())
@@ -108,6 +111,17 @@ struct QuickLogMenu: View {
                     subtitle: vitals.latest(VitalReading.bloodPressure).map { reading in
                         "zuletzt \(reading.valueText), \(reading.date.map { BIOSFormat.relative($0) } ?? reading.measuredAt)"
                     } ?? "Sys, Dia, Puls"
+                )
+            }
+            NavigationLink {
+                WorkoutLogView()
+            } label: {
+                QuickLogMenuRow(
+                    symbol: "dumbbell",
+                    color: BIOSTheme.rhr,
+                    title: "Training eintragen",
+                    subtitle: workouts.items.first(where: \.manual).map { "zuletzt \($0.title), \($0.whenText)" }
+                        ?? "ohne Whoop von Hand"
                 )
             }
         }
