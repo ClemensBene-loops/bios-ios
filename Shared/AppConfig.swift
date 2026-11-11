@@ -1,10 +1,15 @@
 import Foundation
 
-/// Build-time configuration read from Info.plist.
+/// Build-time configuration read from Info.plist. Compiled into the app and
+/// the widget extension (Shared/): the lock screen widgets fetch
+/// `GET /v1/live-activity` themselves (no App Group).
 ///
 /// `BIOSAPIBaseURL` and `BIOSAPISecret` are empty in git and filled by the
 /// build workflow from the GitHub secrets `BIOS_API_BASE_URL` and
-/// `BIOS_API_SECRET`. Both may be missing; callers must handle `nil`.
+/// `BIOS_API_SECRET`, in `Config/Info.plist` (app) and
+/// `BIOSWidgets/Info.plist` (extension). Both may be missing; callers must
+/// handle `nil`. In the extension a key missing from its own Info.plist falls
+/// back to the containing app's Info.plist (BIOS.app/PlugIns/x.appex).
 ///
 /// `BIOSAPSEnvironment` is `$(APS_ENVIRONMENT)` from the xcconfigs, i.e. the
 /// same value that goes into the `aps-environment` entitlement
@@ -59,12 +64,25 @@ enum AppConfig {
         apsEnvironment == "development" ? "sandbox" : "production"
     }
 
-    /// Non-empty, trimmed Info.plist string, or nil.
+    /// Non-empty, trimmed Info.plist string, or nil. In an app extension the
+    /// containing app's Info.plist is the fallback.
     private static func infoString(_ key: String) -> String? {
-        guard let raw = Bundle.main.object(forInfoDictionaryKey: key) as? String else {
-            return nil
+        if let value = trimmed(Bundle.main.object(forInfoDictionaryKey: key)) {
+            return value
         }
+        return trimmed(hostAppBundle?.object(forInfoDictionaryKey: key))
+    }
+
+    private static func trimmed(_ raw: Any?) -> String? {
+        guard let raw = raw as? String else { return nil }
         let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         return value.isEmpty ? nil : value
     }
+
+    /// The app bundle around this extension (nil when running as the app).
+    private static let hostAppBundle: Bundle? = {
+        let url = Bundle.main.bundleURL
+        guard url.pathExtension == "appex" else { return nil }
+        return Bundle(url: url.deletingLastPathComponent().deletingLastPathComponent())
+    }()
 }

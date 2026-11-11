@@ -19,6 +19,31 @@ struct DeviceRegistration: Encodable, Sendable {
     }
 }
 
+/// Body of `POST {base}/v1/events`: `{"date": "YYYY-MM-DD", "kind": "alcohol", "note": null}`.
+struct EventBody: Encodable, Sendable {
+    let date: String
+    let kind: String
+    let note: String?
+
+    enum CodingKeys: String, CodingKey {
+        case date
+        case kind
+        case note
+    }
+
+    /// Writes `note` as explicit null instead of omitting it.
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(date, forKey: .date)
+        try container.encode(kind, forKey: .kind)
+        if let note {
+            try container.encode(note, forKey: .note)
+        } else {
+            try container.encodeNil(forKey: .note)
+        }
+    }
+}
+
 /// Response of `GET {base}/v1/summary`.
 ///
 /// The inner documents are the server's `whoop_check.json` and `outlook.json`,

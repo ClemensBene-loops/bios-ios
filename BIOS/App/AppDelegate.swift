@@ -23,11 +23,14 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         UNUserNotificationCenter.current().delegate = notificationDelegate
         registerNotificationCategories()
         requestAuthorizationAndRegister()
+        // Early, so a Live Activity started by push (iOS 17.2+) delivers its
+        // update token even when the system launches the app in the background.
+        LiveActivityController.shared.startObserving()
         return true
     }
 
-    /// Categories the server sets as `aps.category`. No custom actions: a tap
-    /// opens the app. With hidden previews the title (emoji + verdict) stays
+    /// Categories the server sets as `aps.category` (incl. `LAB_REVIEW`). No custom actions except
+    /// `MOVE_NUDGE` (below): a tap opens the app. With hidden previews the title (emoji + verdict) stays
     /// visible; grouped notifications get a German summary line.
     private func registerNotificationCategories() {
         let definitions: [(id: String, summary: String)] = [
@@ -35,6 +38,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
             ("WHOOP_CLEAR", "%u weitere Whoop-Meldungen"),
             ("OUTLOOK_ALERT", "%u weitere Ausblick-Meldungen"),
             ("OUTLOOK_WEEKLY", "%u weitere Ausblick-Meldungen"),
+            // Heartbeat warnings/Entwarnung and the test push (thread "system", tab Mehr)
+            ("SYSTEM_ALERT", "%u weitere System-Meldungen"),
+            // Labor: extracted values wait for the review (thread "labs", opens Labor > Zu prüfen)
+            ("LAB_REVIEW", "%u weitere Befunde"),
         ]
         var categories = Set<UNNotificationCategory>()
         for definition in definitions {
@@ -47,7 +54,31 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
                 options: [.hiddenPreviewsShowTitle]
             ))
         }
+        categories.insert(Self.moveNudgeCategory())
         UNUserNotificationCenter.current().setNotificationCategories(categories)
+    }
+
+    /// Bewegungs-Stupser (thread "move"): three buttons without `.foreground`,
+    /// so they work from the lock screen and on the Apple Watch without opening
+    /// the app; each one posts `/v1/nudge/action` (NotificationDelegate).
+    /// A tap on the notification itself opens Heute (`bios.tab`).
+    private static func moveNudgeCategory() -> UNNotificationCategory {
+        let actions = [
+            UNNotificationAction(identifier: NudgeAction.doneID, title: "Erledigt", options: [],
+                                 icon: UNNotificationActionIcon(systemImageName: "checkmark")),
+            UNNotificationAction(identifier: NudgeAction.snoozeID, title: "Später", options: [],
+                                 icon: UNNotificationActionIcon(systemImageName: "clock")),
+            UNNotificationAction(identifier: NudgeAction.offTodayID, title: "Heute nicht", options: [],
+                                 icon: UNNotificationActionIcon(systemImageName: "moon")),
+        ]
+        return UNNotificationCategory(
+            identifier: NudgeAction.categoryID,
+            actions: actions,
+            intentIdentifiers: [],
+            hiddenPreviewsBodyPlaceholder: "Bewegungs-Stupser",
+            categorySummaryFormat: "%u weitere Stupser",
+            options: [.hiddenPreviewsShowTitle]
+        )
     }
 
     /// Called when the app becomes active: picks up a permission the user
@@ -188,6 +219,18 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
+        // Stupser buttons run in the background: answer the server, do not open a tab.
+        if let action = NudgeAction(actionIdentifier: response.actionIdentifier) {
+            let bios = response.notification.request.content.userInfo[AnyHashable("bios")] as? [String: Any]
+            let nudgeID = (bios?["nudge_id"] as? String) ?? ""
+            let done = CompletionBox(completionHandler)
+            Task { @MainActor in
+                NudgeActionQueue.handle(id: nudgeID, action: action) {
+                    done.call()
+                }
+            }
+            return
+        }
         if response.actionIdentifier != UNNotificationDismissActionIdentifier {
             let push = PushInfo(notification: response.notification, kind: .opened)
             Task { @MainActor in
@@ -195,6 +238,25 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
             }
         }
         completionHandler()
+    }
+}
+
+/// Carries a notification completion handler into a Task and calls it once.
+/// UserNotifications accepts the call from any thread.
+final class CompletionBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var handler: (() -> Void)?
+
+    init(_ handler: @escaping () -> Void) {
+        self.handler = handler
+    }
+
+    func call() {
+        lock.lock()
+        let pending = handler
+        handler = nil
+        lock.unlock()
+        pending?()
     }
 }
 
